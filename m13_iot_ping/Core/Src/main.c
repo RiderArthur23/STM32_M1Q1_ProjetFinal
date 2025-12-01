@@ -26,6 +26,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "lwip/udp.h"
+#include "lwip/ip_addr.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -76,6 +79,7 @@ osThreadId heartBeatTaskHandle;
 osThreadId FramTaskHandle;
 osThreadId RtcTaskHandle;
 osThreadId AccelerometerTaskHandle;
+osThreadId PublishToBroadcastHandle;
 osMessageQId messageQueueHandle;
 osMutexId uartMutexHandle;
 osSemaphoreId AdcEndOfConversionHandle;
@@ -107,6 +111,7 @@ void StartHeartBeatTask(void const * argument);
 void vFramTask(void const * argument);
 void vRtcTask(void const * argument);
 void vAccelerometerTask(void const * argument);
+void vPublishToBroadcast(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -221,6 +226,10 @@ int main(void)
   osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 256);
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
+  /* definition and creation of PublishToBroadcast */
+  osThreadDef(PublishToBroadcast, vPublishToBroadcast, osPriorityIdle, 0, 256);
+  PublishToBroadcastHandle = osThreadCreate(osThread(PublishToBroadcast), NULL);
+
   /* USER CODE BEGIN RTOS_THREADS */
 
   /* USER CODE END RTOS_THREADS */
@@ -249,6 +258,10 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
 
   /** Configure the main internal regulator output voltage
   */
@@ -952,6 +965,45 @@ void vAccelerometerTask(void const * argument)
 		log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
   }
   /* USER CODE END vAccelerometerTask */
+}
+
+/* USER CODE BEGIN Header_vPublishToBroadcast */
+/**
+* @brief Function implementing the PublishToBroadcast thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_vPublishToBroadcast */
+void vPublishToBroadcast(void const * argument)
+{
+  /* USER CODE BEGIN vPublishToBroadcast */
+	MX_LWIP_Init();
+	osDelay(2000);
+
+  /* Infinite loop */
+  for(;;)
+  {
+	  struct udp_pcb *upcb;
+	  struct pbuf *p;
+	  const char *msg = "Hello broadcast";
+
+	  upcb = udp_new_ip_type(IPADDR_TYPE_ANY);
+	  if (upcb == NULL) return;
+
+	  ip_addr_t broadcast_ip;
+	  IP4_ADDR(&broadcast_ip, 192,168,1,255);
+
+	  p = pbuf_alloc(PBUF_TRANSPORT, strlen(msg), PBUF_RAM);
+	  memcpy(p->payload, msg, strlen(msg));
+
+	  udp_sendto(upcb, p, &broadcast_ip, 5000);
+
+	  pbuf_free(p);
+	  udp_remove(upcb);
+
+	  osDelay(500);
+  }
+  /* USER CODE END vPublishToBroadcast */
 }
 
 /**
