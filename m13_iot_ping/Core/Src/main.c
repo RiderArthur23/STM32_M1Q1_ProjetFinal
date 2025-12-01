@@ -819,7 +819,7 @@ void StartHeartBeatTask(void const * argument)
   for(;;)
   {
 	  HAL_GPIO_TogglePin(GPIOB, LD2_Pin);
-	  osDelay(300);
+	  osDelay(200);
   }
   /* USER CODE END StartHeartBeatTask */
 }
