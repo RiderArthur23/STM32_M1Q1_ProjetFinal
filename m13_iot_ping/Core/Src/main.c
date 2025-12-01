@@ -865,7 +865,7 @@ void vFramTask(void const * argument)
 	  HAL_SPI_Receive(&hspi4, &rdata, sizeof(rdata), 1000);
 	  HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 
-	  // log_message("FRAM values : %d", rdata);
+	  //log_message("FRAM values : %d", rdata);
 	  osDelay(500);
   }
   /* USER CODE END vFramTask */
@@ -911,7 +911,7 @@ void vRtcTask(void const * argument)
 	  uint8_t umin = rdata[1] & 0x0F;
 	  uint8_t vmin = (dmin * 10) + umin;
 
-	  // log_message("RTC values : hh : %d : %d", vmin, vsec);
+	  //log_message("RTC values : hh : %d : %d", vmin, vsec);
 	  osDelay(300);
   }
   /* USER CODE END vRtcTask */
