@@ -79,7 +79,7 @@ osThreadId heartBeatTaskHandle;
 osThreadId FramTaskHandle;
 osThreadId RtcTaskHandle;
 osThreadId AccelerometerTaskHandle;
-osThreadId PublishToBroadcastHandle;
+osThreadId PublishToBroadcastTaskHandle;
 osMessageQId messageQueueHandle;
 osMutexId uartMutexHandle;
 osSemaphoreId AdcEndOfConversionHandle;
@@ -111,7 +111,7 @@ void StartHeartBeatTask(void const * argument);
 void vFramTask(void const * argument);
 void vRtcTask(void const * argument);
 void vAccelerometerTask(void const * argument);
-void vPublishToBroadcast(void const * argument);
+void vPublishToBroadcastTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -195,40 +195,40 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 512);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
-  osThreadDef(logMessageTask, LogMessageTask, osPriorityNormal, 0, 256);
+  osThreadDef(logMessageTask, LogMessageTask, osPriorityAboveNormal, 0, 512);
   logMessageTaskHandle = osThreadCreate(osThread(logMessageTask), NULL);
 
   /* definition and creation of clientTask */
-  osThreadDef(clientTask, StartClientTask, osPriorityBelowNormal, 0, 256);
+  osThreadDef(clientTask, StartClientTask, osPriorityBelowNormal, 0, 512);
   clientTaskHandle = osThreadCreate(osThread(clientTask), NULL);
 
   /* definition and creation of serverTask */
-  osThreadDef(serverTask, StartServerTask, osPriorityBelowNormal, 0, 256);
+  osThreadDef(serverTask, StartServerTask, osPriorityBelowNormal, 0, 512);
   serverTaskHandle = osThreadCreate(osThread(serverTask), NULL);
 
   /* definition and creation of heartBeatTask */
-  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityIdle, 0, 256);
+  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityIdle, 0, 512);
   heartBeatTaskHandle = osThreadCreate(osThread(heartBeatTask), NULL);
 
   /* definition and creation of FramTask */
-  osThreadDef(FramTask, vFramTask, osPriorityLow, 0, 256);
+  osThreadDef(FramTask, vFramTask, osPriorityLow, 0, 512);
   FramTaskHandle = osThreadCreate(osThread(FramTask), NULL);
 
   /* definition and creation of RtcTask */
-  osThreadDef(RtcTask, vRtcTask, osPriorityLow, 0, 256);
+  osThreadDef(RtcTask, vRtcTask, osPriorityLow, 0, 512);
   RtcTaskHandle = osThreadCreate(osThread(RtcTask), NULL);
 
   /* definition and creation of AccelerometerTask */
-  osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 256);
+  osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 512);
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
-  /* definition and creation of PublishToBroadcast */
-  osThreadDef(PublishToBroadcast, vPublishToBroadcast, osPriorityIdle, 0, 256);
-  PublishToBroadcastHandle = osThreadCreate(osThread(PublishToBroadcast), NULL);
+  /* definition and creation of PublishToBroadcastTask */
+  osThreadDef(PublishToBroadcastTask, vPublishToBroadcastTask, osPriorityNormal, 0, 512);
+  PublishToBroadcastTaskHandle = osThreadCreate(osThread(PublishToBroadcastTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 
@@ -734,6 +734,34 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     }
 }
 
+void udp_send_cb(void *arg)
+{
+    struct udp_pcb *udp = (struct udp_pcb *)arg;
+
+    const char *json_msg = "{\"type\":\"presence\",\"id\":\"nucleo-14\",\"ip\":\"192.168.1.185\"}";
+    uint16_t len = strlen(json_msg);
+
+    ip_addr_t dest_ip;
+    IP4_ADDR(&dest_ip, 192,168,1,255);
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
+    if (!p) return;
+
+    pbuf_take(p, json_msg, len);
+    udp_sendto(udp, p, &dest_ip, 1234);
+    pbuf_free(p);
+}
+
+/* USER CODE BEGIN ApplicationHooks */
+
+/* USER CODE BEGIN ApplicationHooks */
+
+/* USER CODE END ApplicationHooks */
+
+
+/* USER CODE END ApplicationHooks */
+
+
 
 /* USER CODE END 4 */
 
@@ -962,48 +990,46 @@ void vAccelerometerTask(void const * argument)
 		uint32_t Average_Y = Sum_Y / 5;
 		uint32_t Average_Z = Sum_Z / 5;
 
-		log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
+		// log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
   }
   /* USER CODE END vAccelerometerTask */
 }
 
-/* USER CODE BEGIN Header_vPublishToBroadcast */
+/* USER CODE BEGIN Header_vPublishToBroadcastTask */
 /**
-* @brief Function implementing the PublishToBroadcast thread.
+* @brief Function implementing the PublishToBroadcastTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_vPublishToBroadcast */
-void vPublishToBroadcast(void const * argument)
+/* USER CODE END Header_vPublishToBroadcastTask */
+void vPublishToBroadcastTask(void const * argument)
 {
-  /* USER CODE BEGIN vPublishToBroadcast */
-	MX_LWIP_Init();
-	osDelay(2000);
-
+  /* USER CODE BEGIN vPublishToBroadcastTask */
   /* Infinite loop */
-  for(;;)
-  {
-	  struct udp_pcb *upcb;
-	  struct pbuf *p;
-	  const char *msg = "Hello broadcast";
+	 struct udp_pcb *udp;
+	ip_addr_t dest_ip;
 
-	  upcb = udp_new_ip_type(IPADDR_TYPE_ANY);
-	  if (upcb == NULL) return;
+	IP4_ADDR(&dest_ip, 192,168,1,255);
 
-	  ip_addr_t broadcast_ip;
-	  IP4_ADDR(&broadcast_ip, 192,168,1,255);
+	log_message("Broadcast task started.\r\n");
 
-	  p = pbuf_alloc(PBUF_TRANSPORT, strlen(msg), PBUF_RAM);
-	  memcpy(p->payload, msg, strlen(msg));
+	udp = udp_new();
+	if (!udp)
+	{
+		log_message("UDP alloc failed!\r\n");
+		vTaskDelete(NULL);
+	}
 
-	  udp_sendto(upcb, p, &broadcast_ip, 5000);
+	ip_set_option(udp, SOF_BROADCAST);
+	udp_bind(udp, IP_ADDR_ANY, 0);
 
-	  pbuf_free(p);
-	  udp_remove(upcb);
-
-	  osDelay(500);
-  }
-  /* USER CODE END vPublishToBroadcast */
+	for (;;)
+	{
+		tcpip_callback(udp_send_cb, udp);
+		log_message("Sent to ");
+		osDelay(5000);
+	}
+  /* USER CODE END vPublishToBroadcastTask */
 }
 
 /**
