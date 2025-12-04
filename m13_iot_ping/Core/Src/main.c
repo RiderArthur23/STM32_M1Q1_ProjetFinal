@@ -77,7 +77,6 @@ osThreadId clientTaskHandle;
 osThreadId serverTaskHandle;
 osThreadId heartBeatTaskHandle;
 osThreadId FramTaskHandle;
-osThreadId RtcTaskHandle;
 osThreadId AccelerometerTaskHandle;
 osThreadId PublishToBroadcastTaskHandle;
 osMessageQId messageQueueHandle;
@@ -109,11 +108,12 @@ void StartClientTask(void const * argument);
 void StartServerTask(void const * argument);
 void StartHeartBeatTask(void const * argument);
 void vFramTask(void const * argument);
-void vRtcTask(void const * argument);
 void vAccelerometerTask(void const * argument);
 void vPublishToBroadcastTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
+
+uint8_t DecimalToBCD(uint8_t decimal);
 
 /* USER CODE END PFP */
 
@@ -218,16 +218,12 @@ int main(void)
   osThreadDef(FramTask, vFramTask, osPriorityLow, 0, 512);
   FramTaskHandle = osThreadCreate(osThread(FramTask), NULL);
 
-  /* definition and creation of RtcTask */
-  osThreadDef(RtcTask, vRtcTask, osPriorityLow, 0, 512);
-  RtcTaskHandle = osThreadCreate(osThread(RtcTask), NULL);
-
   /* definition and creation of AccelerometerTask */
   osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 512);
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
   /* definition and creation of PublishToBroadcastTask */
-  osThreadDef(PublishToBroadcastTask, vPublishToBroadcastTask, osPriorityNormal, 0, 512);
+  osThreadDef(PublishToBroadcastTask, vPublishToBroadcastTask, osPriorityNormal, 0, 4096);
   PublishToBroadcastTaskHandle = osThreadCreate(osThread(PublishToBroadcastTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -259,10 +255,6 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure LSE Drive Capability
-  */
-  HAL_PWR_EnableBkUpAccess();
-
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
@@ -271,16 +263,14 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI
-                              |RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 25;
-  RCC_OscInitStruct.PLL.PLLN = 432;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 216;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 2;
   RCC_OscInitStruct.PLL.PLLR = 2;
@@ -727,6 +717,67 @@ void log_message(const char *format, ...) {
 	osMessagePut(messageQueueHandle, (uint32_t)&msg, 0);
 }
 
+void Init_RTC(void){
+	// Init the super capacitor
+	uint8_t tdata_init[] = {RTC_adr_TCH2, 0x20, 0x45};
+	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata_init, 3, 1000);
+}
+
+void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8_t date, uint8_t month, uint8_t years)
+{
+	// Convert decimal values to BCD
+	uint8_t BCD_seconds = DecimalToBCD(seconds);
+	uint8_t BCD_minutes = DecimalToBCD(minutes);
+	uint8_t BCD_hours = DecimalToBCD(hours);
+	uint8_t BCD_day = DecimalToBCD(day);
+	uint8_t BCD_date = DecimalToBCD(date);
+	uint8_t BCD_month = DecimalToBCD(month);
+	uint8_t BCD_years = DecimalToBCD(years);
+
+	// Sent all the BCD values to the RTC
+	uint8_t tdata[] = {RTC_adr_seconds, BCD_seconds, BCD_minutes, BCD_hours, BCD_day, BCD_date, BCD_month, BCD_years};
+	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 8, 1000);
+}
+
+
+/* Using this function has to be like :
+ * uint8_t seconds, minutes, hours, ... ;
+ * Read_RTC(&seconds, &minutes, &hours, ...);
+ */
+void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours, uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
+{
+	// Point to the seconds register then receive the data
+	uint8_t tdata[] = {RTC_adr_seconds};
+	uint8_t rdata[7] = {0};
+	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 1, 1000);
+	HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 2, 1000);
+
+	// Store the converted BCD values into the corresponding output pointers
+	*seconds = DecimalToBCD(rdata[0]);
+	*minutes = DecimalToBCD(rdata[1]);
+	*hours = DecimalToBCD(rdata[2]);
+	*day = DecimalToBCD(rdata[3]);
+	*date = DecimalToBCD(rdata[4]);
+	*month = DecimalToBCD(rdata[5]);
+	*years = DecimalToBCD(rdata[6]);
+}
+
+uint8_t DecimalToBCD(uint8_t decimal)
+{
+	uint8_t d_decimal = decimal / 10;
+	uint8_t u_decimal = (decimal - (d_decimal * 10));
+	uint8_t BCD = (d_decimal << 4) || (u_decimal & 0xF);
+	return BCD;
+}
+
+uint8_t BCDToDecimal(uint8_t BCD)
+{
+	uint8_t d_BCD = BCD >> 4;
+	uint8_t u_BCD = BCD & 0x0F;
+	uint8_t Decimal = (d_BCD * 10) + u_BCD;
+	return Decimal;
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     if (hadc == &hadc1){
         //BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -734,34 +785,13 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     }
 }
 
-void udp_send_cb(void *arg)
-{
-    struct udp_pcb *udp = (struct udp_pcb *)arg;
-
-    const char *json_msg = "{\"type\":\"presence\",\"id\":\"nucleo-14\",\"ip\":\"192.168.1.185\"}";
-    uint16_t len = strlen(json_msg);
-
-    ip_addr_t dest_ip;
-    IP4_ADDR(&dest_ip, 192,168,1,255);
-
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
-    if (!p) return;
-
-    pbuf_take(p, json_msg, len);
-    udp_sendto(udp, p, &dest_ip, 1234);
-    pbuf_free(p);
-}
-
 /* USER CODE BEGIN ApplicationHooks */
 
 /* USER CODE BEGIN ApplicationHooks */
 
 /* USER CODE END ApplicationHooks */
 
-
 /* USER CODE END ApplicationHooks */
-
-
 
 /* USER CODE END 4 */
 
@@ -912,52 +942,6 @@ void vFramTask(void const * argument)
   /* USER CODE END vFramTask */
 }
 
-/* USER CODE BEGIN Header_vRtcTask */
-/**
-* @brief Function implementing the RtcTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_vRtcTask */
-void vRtcTask(void const * argument)
-{
-  /* USER CODE BEGIN vRtcTask */
-
-	// Init the super capacitor
-	uint8_t tdata_init[] = {RTC_adr_TCH2, 0x20, 0x45};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata_init, 3, 1000);
-
-	// Set the secondes and the minutes
-	uint8_t tdata[] = {RTC_adr_seconds, 0x02, 0x10};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 3, 1000);
-
-	// Init the buffer for the received data
-	uint8_t rdata[2] = {0,0};
-
-  /* Infinite loop */
-  for(;;)
-  {
-	  // Set read mode and get the data into the 'rdata' buffer
-	  uint8_t tdata2[] = {RTC_adr_seconds};
-	  HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata2, 1, 1000);
-	  HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 2, 1000);
-
-	  // Convert the BCD format to integer of the seconds
-	  uint8_t dsec = rdata[0] >> 4;
-	  uint8_t usec = rdata[0] & 0x0F;
-	  uint8_t vsec = (dsec * 10) + usec;
-
-	  // Convert the BCD format to integer of the minutes
-	  uint8_t dmin = rdata[1] >> 4;
-	  uint8_t umin = rdata[1] & 0x0F;
-	  uint8_t vmin = (dmin * 10) + umin;
-
-	  //log_message("RTC values : hh : %d : %d", vmin, vsec);
-	  osDelay(300);
-  }
-  /* USER CODE END vRtcTask */
-}
-
 /* USER CODE BEGIN Header_vAccelerometerTask */
 /**
 * @brief Function implementing the AccelerometerTa thread.
@@ -1005,30 +989,60 @@ void vAccelerometerTask(void const * argument)
 void vPublishToBroadcastTask(void const * argument)
 {
   /* USER CODE BEGIN vPublishToBroadcastTask */
-  /* Infinite loop */
-	 struct udp_pcb *udp;
-	ip_addr_t dest_ip;
+	/* Infinite loop */
+		struct udp_pcb *udp;
+		struct pbuf *p;
 
-	IP4_ADDR(&dest_ip, 192,168,1,255);
+		const char *device_id = "nucleo-14";
+		const char *my_ip = "192.168.128.185";   //
+		uint16_t len=0;
+		uint16_t err=0;
+		ip_addr_t dest_ip;
 
-	log_message("Broadcast task started.\r\n");
+		IP4_ADDR(&dest_ip, 192,168,1,255);       //
 
-	udp = udp_new();
-	if (!udp)
-	{
-		log_message("UDP alloc failed!\r\n");
-		vTaskDelete(NULL);
-	}
+		// Attendre autorisation de la MasterTask
+		// osSemaphoreWait(SemaphoreMasterHandle, osWaitForever);
 
-	ip_set_option(udp, SOF_BROADCAST);
-	udp_bind(udp, IP_ADDR_ANY, 0);
+		log_message("Broadcast task started.\r\n");
 
-	for (;;)
-	{
-		tcpip_callback(udp_send_cb, udp);
-		log_message("Sent to ");
-		osDelay(5000);
-	}
+		udp = udp_new();
+		//udp_setflags(udp, UDP_FLAGS_BROADCAST);
+		ip_set_option(udp, SOF_BROADCAST);
+		printf("Flags netif: 0x%X\n", netif_default->flags);
+		if (!udp) {
+		   log_message("UDP alloc failed!\r\n");
+		   vTaskDelete(NULL);
+		}
+		//err=udp_connect(udp, &dest_ip, 50000);
+		udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
+
+		for(;;)
+		{
+		    char json_msg[256];
+	        len=snprintf(json_msg, sizeof(json_msg),
+	       		"{"
+	      		   "\"type\":\"presence\","
+	       		   "\"id\":\"%s\","
+	       		   "\"ip\":\"%s\","
+	       		   "\"timestamp\":\"2025-10-02T08:20:00Z\""
+	       		 "}",
+				 device_id,
+		         my_ip//,
+		         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
+		        );
+
+
+		     p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
+		     if (!p) continue;
+		     pbuf_take(p, json_msg, len);
+		     udp_sendto(udp, p, &dest_ip, 1234);
+
+		     pbuf_free(p);
+
+
+		     osDelay(10000);
+		 }
   /* USER CODE END vPublishToBroadcastTask */
 }
 
