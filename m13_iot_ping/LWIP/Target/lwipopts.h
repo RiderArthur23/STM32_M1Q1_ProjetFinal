@@ -128,6 +128,12 @@
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
 
+#define LWIP_NETCONN    1
+#define LWIP_SOCKET    1
+#define LWIP_DNS       1
+
+
+
 /* USER CODE END 1 */
 
 #ifdef __cplusplus

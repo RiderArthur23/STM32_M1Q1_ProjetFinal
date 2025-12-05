@@ -28,6 +28,8 @@
 
 #include "lwip/udp.h"
 #include "lwip/ip_addr.h"
+#include "lwip/api.h"
+
 
 /* USER CODE END Includes */
 
@@ -850,11 +852,39 @@ void LogMessageTask(void const * argument)
 void StartClientTask(void const * argument)
 {
   /* USER CODE BEGIN StartClientTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	ip_addr_t server_ip;
+	  err_t status;
+	  struct netconn *conn;
+
+	  IP4_ADDR(&server_ip, 192,168,1,46);
+
+	  for(;;)
+	  {/*
+		  struct netconn *conn;
+		  ip_addr_t server_ip;
+		  err_t err;
+		  IP4_ADDR(&server_ip, 192, 168, 1, 46);
+		  conn = netconn_new(NETCONN_TCP);
+		  if (conn != NULL) {
+			  err = netconn_connect(conn, &server_ip, 1234);
+			  if (err == ERR_OK) {
+				  const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
+				  log_message("[CLIENT] Sending : %s...\r\n", json);
+				  netconn_write(conn, json, strlen(json), NETCONN_COPY);
+			  }
+			  else {
+				  log_message("[CLIENT] Could not reach server.\r\n");
+			  }
+			  netconn_close(conn);
+			  netconn_delete(conn);
+		  }
+		  else {
+			  log_message("[CLIENT] No connection available.\r\n");
+		  }
+		  osDelay(1000); */
+
+	  }
+
   /* USER CODE END StartClientTask */
 }
 
@@ -868,11 +898,35 @@ void StartClientTask(void const * argument)
 void StartServerTask(void const * argument)
 {
   /* USER CODE BEGIN StartServerTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	struct netconn *conn, *newconn;
+	struct netbuf *buf;
+	char *data;
+	u16_t len;
+	conn = netconn_new(NETCONN_TCP);
+	netconn_bind(conn, IP_ADDR_ANY, 1234);
+	netconn_listen(conn);
+	netconn_set_recvtimeout(conn, 1000);
+	/* Infinite loop inside task */
+	for(;;) {
+		if (netconn_accept(conn, &newconn) == ERR_OK) {
+			if (netconn_recv(newconn, &buf) == ERR_OK) {
+				netbuf_data(buf, (void**)&data, &len);
+				data[len] = '\0';
+				log_message("[SERVER] Received : %s\r\n.",
+						data);
+				netbuf_delete(buf);
+			}
+			else {
+				log_message("[SERVER] No reception.\r\n");
+			}
+			netconn_close(newconn);
+			netconn_delete(newconn);
+	}
+	else {
+	// no client connection at the moment
+	}
+	osDelay(50);
+	}
   /* USER CODE END StartServerTask */
 }
 
@@ -990,6 +1044,7 @@ void vPublishToBroadcastTask(void const * argument)
 {
   /* USER CODE BEGIN vPublishToBroadcastTask */
 	/* Infinite loop */
+	/*
 		struct udp_pcb *udp;
 		struct pbuf *p;
 
@@ -1042,7 +1097,8 @@ void vPublishToBroadcastTask(void const * argument)
 
 
 		     osDelay(10000);
-		 }
+		 }*/
+osDelay(10000);
   /* USER CODE END vPublishToBroadcastTask */
 }
 
