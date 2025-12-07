@@ -78,7 +78,6 @@ osThreadId logMessageTaskHandle;
 osThreadId clientTaskHandle;
 osThreadId serverTaskHandle;
 osThreadId heartBeatTaskHandle;
-osThreadId FramTaskHandle;
 osThreadId AccelerometerTaskHandle;
 osThreadId PublishToBroadcastTaskHandle;
 osMessageQId messageQueueHandle;
@@ -109,7 +108,6 @@ void LogMessageTask(void const * argument);
 void StartClientTask(void const * argument);
 void StartServerTask(void const * argument);
 void StartHeartBeatTask(void const * argument);
-void vFramTask(void const * argument);
 void vAccelerometerTask(void const * argument);
 void vPublishToBroadcastTask(void const * argument);
 
@@ -197,28 +195,24 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 512);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
-  osThreadDef(logMessageTask, LogMessageTask, osPriorityAboveNormal, 0, 512);
+  osThreadDef(logMessageTask, LogMessageTask, osPriorityNormal, 0, 1024);
   logMessageTaskHandle = osThreadCreate(osThread(logMessageTask), NULL);
 
   /* definition and creation of clientTask */
-  osThreadDef(clientTask, StartClientTask, osPriorityBelowNormal, 0, 512);
+  osThreadDef(clientTask, StartClientTask, osPriorityNormal, 0, 1024);
   clientTaskHandle = osThreadCreate(osThread(clientTask), NULL);
 
   /* definition and creation of serverTask */
-  osThreadDef(serverTask, StartServerTask, osPriorityBelowNormal, 0, 512);
+  osThreadDef(serverTask, StartServerTask, osPriorityNormal, 0, 1024);
   serverTaskHandle = osThreadCreate(osThread(serverTask), NULL);
 
   /* definition and creation of heartBeatTask */
-  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityIdle, 0, 512);
+  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityBelowNormal, 0, 512);
   heartBeatTaskHandle = osThreadCreate(osThread(heartBeatTask), NULL);
-
-  /* definition and creation of FramTask */
-  osThreadDef(FramTask, vFramTask, osPriorityLow, 0, 512);
-  FramTaskHandle = osThreadCreate(osThread(FramTask), NULL);
 
   /* definition and creation of AccelerometerTask */
   osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 512);
@@ -768,7 +762,7 @@ uint8_t DecimalToBCD(uint8_t decimal)
 {
 	uint8_t d_decimal = decimal / 10;
 	uint8_t u_decimal = (decimal - (d_decimal * 10));
-	uint8_t BCD = (d_decimal << 4) || (u_decimal & 0xF);
+	uint8_t BCD = (d_decimal << 4) | (u_decimal & 0xF);
 	return BCD;
 }
 
@@ -778,6 +772,41 @@ uint8_t BCDToDecimal(uint8_t BCD)
 	uint8_t u_BCD = BCD & 0x0F;
 	uint8_t Decimal = (d_BCD * 10) + u_BCD;
 	return Decimal;
+}
+
+void Init_FRAM(void)
+{
+	// Dummy message pour initialiser correctement le SPI
+	uint8_t dummy = 0xFF;
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
+	HAL_SPI_Transmit(&hspi4, &dummy, 1, 1000);
+	osDelay(1);
+
+	// Activer WREN
+	uint8_t tdata_init = FRAM_opcode_WREN;
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi4, &tdata_init, 1, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
+}
+
+void Write_FRAM(void)
+{
+	// Envoyer l'opcode d'écriture, la bonne adresse et ce qu'on veut écrire
+	uint8_t tdata[] = {FRAM_opcode_write, (test_adr >> 16),  (test_adr >> 8), test_adr, 14};
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi4, tdata, sizeof(tdata), 1000);
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
+}
+
+void Read_FRAM(void)
+{
+	// Envoyer l'opcode de lecture avec l'adresse puis se mettre en lecture
+	uint8_t rdata = 0;
+	uint8_t tdata2[] = {FRAM_opcode_read, (test_adr >> 16),  (test_adr >> 8), test_adr};
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi4, tdata2, sizeof(tdata2), 1000);
+	HAL_SPI_Receive(&hspi4, &rdata, sizeof(rdata), 1000);
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
@@ -852,18 +881,13 @@ void LogMessageTask(void const * argument)
 void StartClientTask(void const * argument)
 {
   /* USER CODE BEGIN StartClientTask */
-	ip_addr_t server_ip;
-	  err_t status;
-	  struct netconn *conn;
-
-	  IP4_ADDR(&server_ip, 192,168,1,46);
+	struct netconn *conn;
+			  ip_addr_t server_ip;
+			  err_t err;
+			  IP4_ADDR(&server_ip, 192, 168, 1, 46);
 
 	  for(;;)
-	  {/*
-		  struct netconn *conn;
-		  ip_addr_t server_ip;
-		  err_t err;
-		  IP4_ADDR(&server_ip, 192, 168, 1, 46);
+	  {
 		  conn = netconn_new(NETCONN_TCP);
 		  if (conn != NULL) {
 			  err = netconn_connect(conn, &server_ip, 1234);
@@ -871,6 +895,7 @@ void StartClientTask(void const * argument)
 				  const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
 				  log_message("[CLIENT] Sending : %s...\r\n", json);
 				  netconn_write(conn, json, strlen(json), NETCONN_COPY);
+				  osDelay(20000);
 			  }
 			  else {
 				  log_message("[CLIENT] Could not reach server.\r\n");
@@ -881,7 +906,7 @@ void StartClientTask(void const * argument)
 		  else {
 			  log_message("[CLIENT] No connection available.\r\n");
 		  }
-		  osDelay(1000); */
+		  osDelay(200);
 
 	  }
 
@@ -925,7 +950,7 @@ void StartServerTask(void const * argument)
 	else {
 	// no client connection at the moment
 	}
-	osDelay(50);
+	osDelay(2000);
 	}
   /* USER CODE END StartServerTask */
 }
@@ -944,56 +969,9 @@ void StartHeartBeatTask(void const * argument)
   for(;;)
   {
 	  HAL_GPIO_TogglePin(GPIOB, LD2_Pin);
-	  osDelay(200);
-  }
-  /* USER CODE END StartHeartBeatTask */
-}
-
-/* USER CODE BEGIN Header_vFramTask */
-/**
-* @brief Function implementing the FramTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_vFramTask */
-void vFramTask(void const * argument)
-{
-  /* USER CODE BEGIN vFramTask */
-
-	// Dummy message pour initialiser correctement le SPI
-	uint8_t dummy = 0xFF;
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-	HAL_SPI_Transmit(&hspi4, &dummy, 1, 1000);
-	osDelay(1);
-
-	// Activer WREN
-	uint8_t tdata_init = FRAM_opcode_WREN;
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, &tdata_init, 1, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-
-
-	// Envoyer l'opcode d'écriture, la bonne adresse et ce qu'on veut écrire
-	uint8_t tdata[] = {FRAM_opcode_write, (test_adr >> 16),  (test_adr >> 8), test_adr, 14};
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, tdata, sizeof(tdata), 1000);
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-
-  /* Infinite loop */
-  for(;;)
-  {
-	  // Envoyer l'opcode de lecture avec l'adresse puis se mettre en lecture
-	  uint8_t rdata = 0;
-	  uint8_t tdata2[] = {FRAM_opcode_read, (test_adr >> 16),  (test_adr >> 8), test_adr};
-	  HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	  HAL_SPI_Transmit(&hspi4, tdata2, sizeof(tdata2), 1000);
-	  HAL_SPI_Receive(&hspi4, &rdata, sizeof(rdata), 1000);
-	  HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-
-	  //log_message("FRAM values : %d", rdata);
 	  osDelay(500);
   }
-  /* USER CODE END vFramTask */
+  /* USER CODE END StartHeartBeatTask */
 }
 
 /* USER CODE BEGIN Header_vAccelerometerTask */
@@ -1043,37 +1021,35 @@ void vAccelerometerTask(void const * argument)
 void vPublishToBroadcastTask(void const * argument)
 {
   /* USER CODE BEGIN vPublishToBroadcastTask */
+/*
+				struct udp_pcb *udp;
+				struct pbuf *p;
+
+				const char *device_id = "nucleo-14";
+				const char *my_ip = "192.168.128.185";   //
+				uint16_t len=0;
+				uint16_t err=0;
+				ip_addr_t dest_ip;
+
+				IP4_ADDR(&dest_ip, 192,168,1,255);       //
+
+				log_message("Broadcast task started.\r\n");
+
+				udp = udp_new();
+				//udp_setflags(udp, UDP_FLAGS_BROADCAST);
+				ip_set_option(udp, SOF_BROADCAST);
+				printf("Flags netif: 0x%X\n", netif_default->flags);
+				if (!udp) {
+				   log_message("UDP alloc failed!\r\n");
+				   vTaskDelete(NULL);
+				}
+				//err=udp_connect(udp, &dest_ip, 50000);
+				udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
+*/
 	/* Infinite loop */
-	/*
-		struct udp_pcb *udp;
-		struct pbuf *p;
-
-		const char *device_id = "nucleo-14";
-		const char *my_ip = "192.168.128.185";   //
-		uint16_t len=0;
-		uint16_t err=0;
-		ip_addr_t dest_ip;
-
-		IP4_ADDR(&dest_ip, 192,168,1,255);       //
-
-		// Attendre autorisation de la MasterTask
-		// osSemaphoreWait(SemaphoreMasterHandle, osWaitForever);
-
-		log_message("Broadcast task started.\r\n");
-
-		udp = udp_new();
-		//udp_setflags(udp, UDP_FLAGS_BROADCAST);
-		ip_set_option(udp, SOF_BROADCAST);
-		printf("Flags netif: 0x%X\n", netif_default->flags);
-		if (!udp) {
-		   log_message("UDP alloc failed!\r\n");
-		   vTaskDelete(NULL);
-		}
-		//err=udp_connect(udp, &dest_ip, 50000);
-		udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
-
 		for(;;)
-		{
+		{/*
+			// Dans le for(;;)
 		    char json_msg[256];
 	        len=snprintf(json_msg, sizeof(json_msg),
 	       		"{"
@@ -1095,10 +1071,9 @@ void vPublishToBroadcastTask(void const * argument)
 
 		     pbuf_free(p);
 
-
-		     osDelay(10000);
-		 }*/
-osDelay(10000);
+*/
+		     osDelay(2000);
+		 }
   /* USER CODE END vPublishToBroadcastTask */
 }
 
