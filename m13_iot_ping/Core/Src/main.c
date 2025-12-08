@@ -26,9 +26,13 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+// Inlcudes for LWIP
 #include "lwip/udp.h"
 #include "lwip/ip_addr.h"
 #include "lwip/api.h"
+
+// Additional includes
+#include <math.h>		// (SQRT)
 
 
 /* USER CODE END Includes */
@@ -88,7 +92,12 @@ osSemaphoreId AdcEndOfConversionHandle;
 /* FreeRTOS private variables */
 
 /*	Private global variables */
-uint16_t ConversionTable[15];
+
+// ADC variables
+uint16_t ConversionTable[300];
+uint32_t VRMS_X = 0;
+uint32_t VRMS_Y = 0;
+uint32_t VRMS_Z = 0;
 
 
 /* USER CODE END PV */
@@ -114,6 +123,8 @@ void vPublishToBroadcastTask(void const * argument);
 /* USER CODE BEGIN PFP */
 
 uint8_t DecimalToBCD(uint8_t decimal);
+
+
 
 /* USER CODE END PFP */
 
@@ -882,9 +893,9 @@ void StartClientTask(void const * argument)
 {
   /* USER CODE BEGIN StartClientTask */
 	struct netconn *conn;
-			  ip_addr_t server_ip;
-			  err_t err;
-			  IP4_ADDR(&server_ip, 192, 168, 129, 18);
+	ip_addr_t server_ip;
+	err_t err;
+	IP4_ADDR(&server_ip, 192, 168, 129, 18);
 
 	  for(;;)
 	  {
@@ -986,27 +997,61 @@ void vAccelerometerTask(void const * argument)
   /* USER CODE BEGIN vAccelerometerTask */
 
 	HAL_TIM_Base_Start(&htim2);
-	HAL_ADC_Start_DMA(&hadc1, ConversionTable, 15);
+	HAL_ADC_Start_DMA(&hadc1, ConversionTable, 300);
 
   /* Infinite loop */
   for(;;)
   {
 	  osSemaphoreWait(AdcEndOfConversionHandle, osWaitForever);
 
-	  uint32_t Sum_X = 0;
-	  uint32_t Sum_Y = 0;
-	  uint32_t Sum_Z = 0;
+	  /*	Reorganize the values from the DMA buffer		*/
+	  uint16_t X[100] = {0};
+	  uint16_t Y[100] = {0};
+	  uint16_t Z[100] = {0};
+	  uint16_t cnt = 0;
 
-	  for (int i=0;i<15;i+=3){
-		  Sum_X += ConversionTable[i];
-		  Sum_Y += ConversionTable[i+1];
-		  Sum_Z += ConversionTable[i+2];
+	  for (int i=0;i<300;i+=3){
+		  X[cnt] += ConversionTable[i];
+		  Y[cnt] += ConversionTable[i+1];
+		  Z[cnt] += ConversionTable[i+2];
+		  cnt++;
 	  }
-	  uint32_t Average_X = Sum_X / 5;
-		uint32_t Average_Y = Sum_Y / 5;
-		uint32_t Average_Z = Sum_Z / 5;
 
-		// log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
+	  /*	Moving average calculations		*/
+	  uint32_t MovingAverage_X[100] = {0};
+	  uint32_t MovingAverage_Y[100] = {0};
+	  uint32_t MovingAverage_Z[100] = {0};
+
+	  // First we calculate the edges of the table (0 & 99)
+	  MovingAverage_X[0] = (X[0] + X[1]) / 2;
+	  MovingAverage_X[99] = (X[98] + X[99]) / 2;
+	  MovingAverage_Y[0] = (Y[0] + Y[1]) / 2;
+	  MovingAverage_Y[99] = (Y[98] + Y[99]) / 2;
+	  MovingAverage_Z[0] = (Z[0] + Z[1]) / 2;
+	  MovingAverage_Z[99] = (Z[98] + Z[99]) / 2;
+
+	  for (int i=1;i<99;i++){
+		  MovingAverage_X[i] = (X[i-1] + X[i] + X[i+1]) / 3;
+		  MovingAverage_Y[i] = (Y[i-1] + Y[i] + Y[i+1]) / 3;
+		  MovingAverage_Z[i] = (Z[i-1] + Z[i] + Z[i+1]) / 3;
+	  }
+
+	  // Calcul des valeurs RMS
+	  uint32_t SumSquareX = 0;
+	  uint32_t SumSquareY = 0;
+	  uint32_t SumSquareZ = 0;
+
+	  for (int i=0;i<100;i++){
+		  SumSquareX += MovingAverage_X[i]^2;
+		  SumSquareY += MovingAverage_Y[i]^2;
+		  SumSquareZ += MovingAverage_Z[i]^2;
+	  }
+
+	  VRMS_X = sqrt(SumSquareX/100);
+	  VRMS_Y = sqrt(SumSquareY/100);
+	  VRMS_Z = sqrt(SumSquareZ/100);
+
+	  // log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
   }
   /* USER CODE END vAccelerometerTask */
 }
