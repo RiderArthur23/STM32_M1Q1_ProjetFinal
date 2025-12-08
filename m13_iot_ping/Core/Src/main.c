@@ -195,7 +195,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 512);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
@@ -884,7 +884,7 @@ void StartClientTask(void const * argument)
 	struct netconn *conn;
 			  ip_addr_t server_ip;
 			  err_t err;
-			  IP4_ADDR(&server_ip, 192, 168, 1, 46);
+			  IP4_ADDR(&server_ip, 192, 168, 129, 18);
 
 	  for(;;)
 	  {
@@ -895,7 +895,7 @@ void StartClientTask(void const * argument)
 				  const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
 				  log_message("[CLIENT] Sending : %s...\r\n", json);
 				  netconn_write(conn, json, strlen(json), NETCONN_COPY);
-				  osDelay(20000);
+				  osDelay(1000);
 			  }
 			  else {
 				  log_message("[CLIENT] Could not reach server.\r\n");
@@ -1021,58 +1021,57 @@ void vAccelerometerTask(void const * argument)
 void vPublishToBroadcastTask(void const * argument)
 {
   /* USER CODE BEGIN vPublishToBroadcastTask */
-/*
-				struct udp_pcb *udp;
-				struct pbuf *p;
 
-				const char *device_id = "nucleo-14";
-				const char *my_ip = "192.168.128.185";   //
-				uint16_t len=0;
-				uint16_t err=0;
-				ip_addr_t dest_ip;
+	struct udp_pcb *udp;
+	struct pbuf *p;
 
-				IP4_ADDR(&dest_ip, 192,168,1,255);       //
+	const char *device_id = "nucleo-14";
+	const char *my_ip = "192.168.1.185";
+	uint16_t len=0;
+	uint16_t err=0;
+	ip_addr_t dest_ip;
 
-				log_message("Broadcast task started.\r\n");
+	IP4_ADDR(&dest_ip, 192,168,1,255);
 
-				udp = udp_new();
-				//udp_setflags(udp, UDP_FLAGS_BROADCAST);
-				ip_set_option(udp, SOF_BROADCAST);
-				printf("Flags netif: 0x%X\n", netif_default->flags);
-				if (!udp) {
-				   log_message("UDP alloc failed!\r\n");
-				   vTaskDelete(NULL);
-				}
-				//err=udp_connect(udp, &dest_ip, 50000);
-				udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
-*/
+	log_message("Broadcast task started.\r\n");
+
+	udp = udp_new();
+	//udp_setflags(udp, UDP_FLAGS_BROADCAST);
+	ip_set_option(udp, SOF_BROADCAST);
+	printf("Flags netif: 0x%X\n", netif_default->flags);
+
+	if (!udp) {
+	   log_message("UDP alloc failed!\r\n");
+	   vTaskDelete(NULL);
+	}
+	//udp_connect(udp, &dest_ip, 1234);
+	udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
+
 	/* Infinite loop */
 		for(;;)
-		{/*
-			// Dans le for(;;)
-		    char json_msg[256];
-	        len=snprintf(json_msg, sizeof(json_msg),
-	       		"{"
-	      		   "\"type\":\"presence\","
-	       		   "\"id\":\"%s\","
-	       		   "\"ip\":\"%s\","
-	       		   "\"timestamp\":\"2025-10-02T08:20:00Z\""
-	       		 "}",
-				 device_id,
-		         my_ip//,
-		         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
-		        );
+		{
+			char json_msg[256];
+			len=snprintf(json_msg, sizeof(json_msg),"{"
+      		   "\"type\":\"presence\","
+       		   "\"id\":\"%s\","
+       		   "\"ip\":\"%s\","
+       		   "\"timestamp\":\"2025-10-02T08:20:00Z\""
+       		 "}",
+			 device_id,
+	         my_ip//,
+	         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
+	        );
 
 
-		     p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
-		     if (!p) continue;
-		     pbuf_take(p, json_msg, len);
-		     udp_sendto(udp, p, &dest_ip, 1234);
+	     p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
+	     if (!p) continue;
+	     pbuf_take(p, json_msg, len);
+	     udp_sendto(udp, p, &dest_ip, 1234);
 
-		     pbuf_free(p);
+	     pbuf_free(p);
 
-*/
-		     osDelay(2000);
+
+	     osDelay(10000);
 		 }
   /* USER CODE END vPublishToBroadcastTask */
 }
