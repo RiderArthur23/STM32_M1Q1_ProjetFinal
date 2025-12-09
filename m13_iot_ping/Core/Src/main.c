@@ -94,10 +94,10 @@ osSemaphoreId AdcEndOfConversionHandle;
 /*	Private global variables */
 
 // ADC variables
-uint16_t ConversionTable[300];
-uint32_t VRMS_X = 0;
-uint32_t VRMS_Y = 0;
-uint32_t VRMS_Z = 0;
+volatile uint16_t ConversionTable[300];
+//float VRMS_X = 0;
+//float VRMS_Y = 0;
+//float VRMS_Z = 0;
 
 
 /* USER CODE END PV */
@@ -123,6 +123,7 @@ void vPublishToBroadcastTask(void const * argument);
 /* USER CODE BEGIN PFP */
 
 uint8_t DecimalToBCD(uint8_t decimal);
+uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax);
 
 
 
@@ -226,7 +227,7 @@ int main(void)
   heartBeatTaskHandle = osThreadCreate(osThread(heartBeatTask), NULL);
 
   /* definition and creation of AccelerometerTask */
-  osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 512);
+  osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 2048);
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
   /* definition and creation of PublishToBroadcastTask */
@@ -820,6 +821,11 @@ void Read_FRAM(void)
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
+uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax)
+{
+    return ((((au32_IN - au32_INmin)*(au32_OUTmax - au32_OUTmin))/(au32_INmax - au32_INmin)) + au32_OUTmin);
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     if (hadc == &hadc1){
         //BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -948,8 +954,7 @@ void StartServerTask(void const * argument)
 			if (netconn_recv(newconn, &buf) == ERR_OK) {
 				netbuf_data(buf, (void**)&data, &len);
 				data[len] = '\0';
-				log_message("[SERVER] Received : %s\r\n.",
-						data);
+				log_message("[SERVER] Received : %s\r\n.", data);
 				netbuf_delete(buf);
 			}
 			else {
@@ -999,59 +1004,76 @@ void vAccelerometerTask(void const * argument)
 	HAL_TIM_Base_Start(&htim2);
 	HAL_ADC_Start_DMA(&hadc1, ConversionTable, 300);
 
+	int VsampleMax = 1023;
+	int VsampleMin = 0;
+
+	uint8_t FirstTime = 1;
+
   /* Infinite loop */
   for(;;)
   {
 	  osSemaphoreWait(AdcEndOfConversionHandle, osWaitForever);
 
-	  /*	Reorganize the values from the DMA buffer		*/
-	  uint16_t X[100] = {0};
-	  uint16_t Y[100] = {0};
-	  uint16_t Z[100] = {0};
-	  uint16_t cnt = 0;
-
-	  for (int i=0;i<300;i+=3){
-		  X[cnt] += ConversionTable[i];
-		  Y[cnt] += ConversionTable[i+1];
-		  Z[cnt] += ConversionTable[i+2];
-		  cnt++;
-	  }
-
-	  /*	Moving average calculations		*/
-	  uint32_t MovingAverage_X[100] = {0};
-	  uint32_t MovingAverage_Y[100] = {0};
-	  uint32_t MovingAverage_Z[100] = {0};
-
-	  // First we calculate the edges of the table (0 & 99)
-	  MovingAverage_X[0] = (X[0] + X[1]) / 2;
-	  MovingAverage_X[99] = (X[98] + X[99]) / 2;
-	  MovingAverage_Y[0] = (Y[0] + Y[1]) / 2;
-	  MovingAverage_Y[99] = (Y[98] + Y[99]) / 2;
-	  MovingAverage_Z[0] = (Z[0] + Z[1]) / 2;
-	  MovingAverage_Z[99] = (Z[98] + Z[99]) / 2;
-
-	  for (int i=1;i<99;i++){
-		  MovingAverage_X[i] = (X[i-1] + X[i] + X[i+1]) / 3;
-		  MovingAverage_Y[i] = (Y[i-1] + Y[i] + Y[i+1]) / 3;
-		  MovingAverage_Z[i] = (Z[i-1] + Z[i] + Z[i+1]) / 3;
-	  }
-
-	  // Calcul des valeurs RMS
-	  uint32_t SumSquareX = 0;
-	  uint32_t SumSquareY = 0;
-	  uint32_t SumSquareZ = 0;
+		  /*	Reorganize the values from the DMA buffer & remap the value from the ADC to get the acceleration		*/
+	  float X[100], Y[100], Z[100];
+	  long X_map, Y_map, Z_map;
 
 	  for (int i=0;i<100;i++){
-		  SumSquareX += MovingAverage_X[i]^2;
-		  SumSquareY += MovingAverage_Y[i]^2;
-		  SumSquareZ += MovingAverage_Z[i]^2;
+	      X_map = MAP((long)ConversionTable[3*i],   VsampleMin, VsampleMax, -3000, 3000);
+	      Y_map = MAP((long)ConversionTable[3*i+1], VsampleMin, VsampleMax, -3000, 3000);
+	      Z_map = MAP((long)ConversionTable[3*i+2], VsampleMin, VsampleMax, -3000, 3000);
+
+	      X[i] = X_map / 1000.0f;
+	      Y[i] = Y_map / 1000.0f;
+	      Z[i] = Z_map / 1000.0f;
 	  }
 
-	  VRMS_X = sqrt(SumSquareX/100);
-	  VRMS_Y = sqrt(SumSquareY/100);
-	  VRMS_Z = sqrt(SumSquareZ/100);
 
-	  // log_message("ADC values : 		X -> %d		;	Y -> %d 	;	 Z-> %d", Average_X, Average_Y, Average_Z);
+	  /*	Moving average calculations		*/
+	  static float MovingAverage_X[100], MovingAverage_Y[100], MovingAverage_Z[100];
+
+	  // First we calculate the edges of the table (0 & 99)
+	  MovingAverage_X[0] = (X[0] + X[1]) / 2.0f;
+	  MovingAverage_X[99] = (X[98] + X[99]) / 2.0f;
+	  MovingAverage_Y[0] = (Y[0] + Y[1]) / 2.0f;
+	  MovingAverage_Y[99] = (Y[98] + Y[99]) / 2.0f;
+	  MovingAverage_Z[0] = (Z[0] + Z[1]) / 2.0f;
+	  MovingAverage_Z[99] = (Z[98] + Z[99]) / 2.0f;
+
+	  for (int i=1;i<99;i++){
+		  MovingAverage_X[i] = (X[i-1] + X[i] + X[i+1]) / 3.0f;
+		  MovingAverage_Y[i] = (Y[i-1] + Y[i] + Y[i+1]) / 3.0f;
+		  MovingAverage_Z[i] = (Z[i-1] + Z[i] + Z[i+1]) / 3.0f;
+	  }
+
+	  /*	Calculations of the RMS values		*/
+	  float SumSquareX = 0;
+	  float SumSquareY = 0;
+	  float SumSquareZ = 0;
+
+	  for (int i=0;i<100;i++){
+		  SumSquareX += MovingAverage_X[i]*MovingAverage_X[i];
+		  SumSquareY += MovingAverage_Y[i]*MovingAverage_Y[i];
+		  SumSquareZ += MovingAverage_Z[i]*MovingAverage_Z[i];
+	  }
+
+	  float VRMS_X = sqrtf(SumSquareX / 100.0f);
+	  float VRMS_Y = sqrtf(SumSquareY / 100.0f);
+	  float VRMS_Z = sqrtf(SumSquareZ / 100.0f);
+
+
+	  /*	Need a bit of processt to send the data to UART		*/
+	  uint32_t d_VRMS_X = (uint32_t)VRMS_X;
+	  uint32_t u_VRMS_X = (uint32_t)((VRMS_X-d_VRMS_X)*1000);
+
+	  uint32_t d_VRMS_Y = (uint32_t)VRMS_Y;
+	  uint32_t u_VRMS_Y = (uint32_t)((VRMS_Y-d_VRMS_Y)*1000);
+
+	  uint32_t d_VRMS_Z = (uint32_t)VRMS_Z;
+	  uint32_t u_VRMS_Z = (uint32_t)((VRMS_Z-d_VRMS_Z)*1000);
+
+	  log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
+
   }
   /* USER CODE END vAccelerometerTask */
 }
