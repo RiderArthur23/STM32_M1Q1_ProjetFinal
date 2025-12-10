@@ -30,6 +30,10 @@
 #include "lwip/udp.h"
 #include "lwip/ip_addr.h"
 #include "lwip/api.h"
+#include <string.h>
+#include <time.h>
+
+
 
 // Additional includes
 #include <math.h>		// (SQRT)
@@ -44,6 +48,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+// For NTP
+#define NTP_SERVER_IP        "129.6.15.28"
+#define NTP_PORT             123
+#define NTP_PACKET_LEN       48
+#define NTP_TIMESTAMP_DELTA  2208988800UL
+
 
 #define RTC_adr 			0xD0
 #define	RTC_adr_seconds		0x00
@@ -95,10 +106,16 @@ osSemaphoreId AdcEndOfConversionHandle;
 /*	Private global variables */
 
 // ADC variables
+
+// For NTP
+struct udp_pcb *ntp_pcb;
+uint8_t ntp_packet[NTP_PACKET_LEN];
+volatile uint8_t is_synced = 0;
+
+
+
 volatile uint16_t ConversionTable[300];
-//float VRMS_X = 0;
-//float VRMS_Y = 0;
-//float VRMS_Z = 0;
+
 
 
 /* USER CODE END PV */
@@ -123,6 +140,12 @@ void PublishToBroadcastTask(void const * argument);
 void UDP_ServerTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
+
+// For NTP
+void ntp_send_request(void);
+void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
+
+
 
 uint8_t DecimalToBCD(uint8_t decimal);
 uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax);
@@ -827,9 +850,55 @@ void Read_FRAM(void)
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
-uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax)
+void ntp_send_request(void)
 {
-    return ((((au32_IN - au32_INmin)*(au32_OUTmax - au32_OUTmin))/(au32_INmax - au32_INmin)) + au32_OUTmin);
+	ip_addr_t ntp_addr;
+
+	ntp_pcb = udp_new();
+	if (ntp_pcb == NULL) return;
+
+	udp_recv(ntp_pcb, ntp_receive, NULL);
+
+	memset(ntp_packet, 0, NTP_PACKET_LEN);
+
+	ntp_packet[0] = 0x1B;  // LI = 0, VN = 3, Mode = 3 (client)
+
+	ipaddr_aton(NTP_SERVER_IP, &ntp_addr);
+
+	struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, NTP_PACKET_LEN, PBUF_RAM);
+	if (p == NULL) return;
+
+	memcpy(p->payload, ntp_packet, NTP_PACKET_LEN);
+
+	udp_sendto(ntp_pcb, p, &ntp_addr, NTP_PORT);
+	pbuf_free(p);
+}
+
+
+void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
+
+	if (p->len >= 48) {
+		uint32_t timestamp;
+		memcpy(&timestamp, (uint8_t *)p->payload + 40, 4);
+		timestamp = ntohl(timestamp) - NTP_TIMESTAMP_DELTA;
+		time_t rawtime = timestamp;
+		struct tm *timeinfo = gmtime(&rawtime);
+		RTC_TimeTypeDef sTime;
+		RTC_DateTypeDef sDate;
+		sTime.Hours = timeinfo->tm_hour;
+		sTime.Minutes = timeinfo->tm_min;
+		sTime.Seconds = timeinfo->tm_sec;
+		sDate.Year = timeinfo->tm_year - 100; // STM32: année depuis 2000
+		sDate.Month = timeinfo->tm_mon + 1;
+		sDate.Date = timeinfo->tm_mday;
+		sDate.WeekDay = timeinfo->tm_wday + 1;
+
+		log_message("[NTP] -> %d\r\n", sTime.Seconds);
+
+		is_synced = 1;
+	}
+	pbuf_free(p);
+	udp_remove(pcb);
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
@@ -861,10 +930,13 @@ void StartDefaultTask(void const * argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
+  osDelay(200);
+  // ntp_send_request();
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	  ntp_send_request();
+    osDelay(1000);
   }
   /* USER CODE END 5 */
 }
