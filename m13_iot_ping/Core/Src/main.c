@@ -209,7 +209,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 512);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 1024);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
@@ -217,7 +217,7 @@ int main(void)
   logMessageTaskHandle = osThreadCreate(osThread(logMessageTask), NULL);
 
   /* definition and creation of TCPClientTask */
-  osThreadDef(TCPClientTask, TCP_ClientTask, osPriorityNormal, 0, 1024);
+  osThreadDef(TCPClientTask, TCP_ClientTask, osPriorityNormal, 0, 2048);
   TCPClientTaskHandle = osThreadCreate(osThread(TCPClientTask), NULL);
 
   /* definition and creation of TCPServerTask */
@@ -225,7 +225,7 @@ int main(void)
   TCPServerTaskHandle = osThreadCreate(osThread(TCPServerTask), NULL);
 
   /* definition and creation of heartBeatTask */
-  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityBelowNormal, 0, 512);
+  osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityBelowNormal, 0, 1024);
   heartBeatTaskHandle = osThreadCreate(osThread(heartBeatTask), NULL);
 
   /* definition and creation of AccelerometerTask */
@@ -237,7 +237,7 @@ int main(void)
   PublishtoBroadcastTaskHandle = osThreadCreate(osThread(PublishtoBroadcastTask), NULL);
 
   /* definition and creation of UDPServerTask */
-  osThreadDef(UDPServerTask, UDP_ServerTask, osPriorityIdle, 0, 1024);
+  osThreadDef(UDPServerTask, UDP_ServerTask, osPriorityNormal, 0, 2048);
   UDPServerTaskHandle = osThreadCreate(osThread(UDPServerTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -907,18 +907,24 @@ void TCP_ClientTask(void const * argument)
 	struct netconn *conn;
 	ip_addr_t server_ip;
 	err_t err;
-	IP4_ADDR(&server_ip, 192, 168, 1, 44);
+	IP4_ADDR(&server_ip, 192, 168, 1, 180);
 
 	for(;;)
 	{
 		conn = netconn_new(NETCONN_TCP);
 		if (conn != NULL) {
 			err = netconn_connect(conn, &server_ip, 1234);
+
+			if (err != ERR_OK) {
+			    log_message("[CLIENT] Send error: %d\r\n", err);
+			}
+
+
 			if (err == ERR_OK) {
-				const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
+				const char *json = "{\"type\": \"data\", \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
 				log_message("[CLIENT] Sending : %s...\r\n", json);
 				netconn_write(conn, json, strlen(json), NETCONN_COPY);
-				osDelay(1000);
+				osDelay(3000);
 			}
 			else {
 				log_message("[CLIENT] Could not reach server.\r\n");
@@ -929,7 +935,7 @@ void TCP_ClientTask(void const * argument)
 		  else {
 			  log_message("[CLIENT] No connection available.\r\n");
 		  }
-		osDelay(200);
+		osDelay(20);
 
 	}
   /* USER CODE END TCP_ClientTask */
@@ -952,7 +958,7 @@ void TCP_ServerTask(void const * argument)
 	conn = netconn_new(NETCONN_TCP);
 	netconn_bind(conn, IP_ADDR_ANY, 1234);
 	netconn_listen(conn);
-	netconn_set_recvtimeout(conn, 1000);
+	netconn_set_recvtimeout(conn, 2000);
 	/* Infinite loop inside task */
 	for(;;) {
 
@@ -1009,41 +1015,30 @@ void vAccelerometerTask(void const * argument)
 	HAL_TIM_Base_Start(&htim2);
 	HAL_ADC_Start_DMA(&hadc1, ConversionTable, 300);
 
-	int VsampleMax = 1023;
-	int VsampleMin = 0;
-
-	uint8_t FirstTime = 1;
-
   /* Infinite loop */
   for(;;)
   {
 	  osSemaphoreWait(AdcEndOfConversionHandle, osWaitForever);
 
-		  /*	Reorganize the values from the DMA buffer & remap the value from the ADC to get the acceleration		*/
-	  float X[100], Y[100], Z[100];
-	  long X_map, Y_map, Z_map;
+		  /*	Reorganize the values from the DMA buffer		*/
+	  uint16_t X[100], Y[100], Z[100];
 
 	  for (int i=0;i<100;i++){
-	      X_map = MAP((long)ConversionTable[3*i],   VsampleMin, VsampleMax, -3000, 3000);
-	      Y_map = MAP((long)ConversionTable[3*i+1], VsampleMin, VsampleMax, -3000, 3000);
-	      Z_map = MAP((long)ConversionTable[3*i+2], VsampleMin, VsampleMax, -3000, 3000);
-
-	      X[i] = X_map / 1000.0f;
-	      Y[i] = Y_map / 1000.0f;
-	      Z[i] = Z_map / 1000.0f;
+	      X[i] = ConversionTable[3*i];
+	      Y[i] = ConversionTable[3*i+1];
+	      Z[i] = ConversionTable[3*i+2];
 	  }
-
 
 	  /*	Moving average calculations		*/
 	  static float MovingAverage_X[100], MovingAverage_Y[100], MovingAverage_Z[100];
 
 	  // First we calculate the edges of the table (0 & 99)
-	  MovingAverage_X[0] = (X[0] + X[1]) / 2.0f;
-	  MovingAverage_X[99] = (X[98] + X[99]) / 2.0f;
-	  MovingAverage_Y[0] = (Y[0] + Y[1]) / 2.0f;
-	  MovingAverage_Y[99] = (Y[98] + Y[99]) / 2.0f;
-	  MovingAverage_Z[0] = (Z[0] + Z[1]) / 2.0f;
-	  MovingAverage_Z[99] = (Z[98] + Z[99]) / 2.0f;
+	  MovingAverage_X[0] = (X[0] + X[1]) / 2;
+	  MovingAverage_X[99] = (X[98] + X[99]) / 2;
+	  MovingAverage_Y[0] = (Y[0] + Y[1]) / 2;
+	  MovingAverage_Y[99] = (Y[98] + Y[99]) / 2;
+	  MovingAverage_Z[0] = (Z[0] + Z[1]) / 2;
+	  MovingAverage_Z[99] = (Z[98] + Z[99]) / 2;
 
 	  for (int i=1;i<99;i++){
 		  MovingAverage_X[i] = (X[i-1] + X[i] + X[i+1]) / 3.0f;
@@ -1115,7 +1110,7 @@ void PublishToBroadcastTask(void const * argument)
 		log_message("UDP alloc failed!\r\n");
 		vTaskDelete(NULL);
 	}
-	//udp_connect(udp, &dest_ip, 1234);
+	//udp_connect(udp, &dest_ip, 12345);
 	udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
 
 	/* Infinite loop */
@@ -1141,7 +1136,6 @@ void PublishToBroadcastTask(void const * argument)
 
 		pbuf_free(p);
 
-
 		osDelay(10000);
 	 }
   /* USER CODE END PublishToBroadcastTask */
@@ -1157,11 +1151,49 @@ void PublishToBroadcastTask(void const * argument)
 void UDP_ServerTask(void const * argument)
 {
   /* USER CODE BEGIN UDP_ServerTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	struct netconn *conn;
+	    struct netbuf *buf;
+	    char *data;
+	    u16_t len;
+	    err_t err;
+
+	    conn = netconn_new(NETCONN_UDP);
+	    if (conn == NULL)
+	    {
+	        log_message("[UDP SERVER] netconn_new failed\r\n");
+	        vTaskDelete(NULL);
+	    }
+
+	    netconn_bind(conn, IP_ADDR_ANY, 1234);
+	    netconn_set_recvtimeout(conn, 15000);
+
+	    log_message("[UDP SERVER] Broadcast listener started on port 5005\r\n");
+
+	    for (;;)
+	    {
+	        err = netconn_recv(conn, &buf);
+
+	        if (err == ERR_OK)
+	        {
+	            netbuf_data(buf, (void**)&data, &len);
+	            data[len] = '\0';
+
+	            log_message("[UDP SERVER] Broadcast received: %s\r\n", data);
+
+	            netbuf_delete(buf);
+	        }
+	        else if (err == ERR_TIMEOUT)
+	        {
+	        	log_message("[UDP SERVER] Timout error");
+
+	        }
+	        else
+	        {
+	            log_message("[UDP SERVER] Receive error: %d\r\n", err);
+	        }
+
+	        osDelay(100);
+	    }
   /* USER CODE END UDP_ServerTask */
 }
 
