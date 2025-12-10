@@ -79,11 +79,12 @@ UART_HandleTypeDef huart3;
 
 osThreadId defaultTaskHandle;
 osThreadId logMessageTaskHandle;
-osThreadId clientTaskHandle;
-osThreadId serverTaskHandle;
+osThreadId TCPClientTaskHandle;
+osThreadId TCPServerTaskHandle;
 osThreadId heartBeatTaskHandle;
 osThreadId AccelerometerTaskHandle;
-osThreadId PublishToBroadcastTaskHandle;
+osThreadId PublishtoBroadcastTaskHandle;
+osThreadId UDPServerTaskHandle;
 osMessageQId messageQueueHandle;
 osMutexId uartMutexHandle;
 osSemaphoreId AdcEndOfConversionHandle;
@@ -114,11 +115,12 @@ static void MX_SPI4_Init(void);
 static void MX_TIM2_Init(void);
 void StartDefaultTask(void const * argument);
 void LogMessageTask(void const * argument);
-void StartClientTask(void const * argument);
-void StartServerTask(void const * argument);
+void TCP_ClientTask(void const * argument);
+void TCP_ServerTask(void const * argument);
 void StartHeartBeatTask(void const * argument);
 void vAccelerometerTask(void const * argument);
-void vPublishToBroadcastTask(void const * argument);
+void PublishToBroadcastTask(void const * argument);
+void UDP_ServerTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -214,13 +216,13 @@ int main(void)
   osThreadDef(logMessageTask, LogMessageTask, osPriorityNormal, 0, 1024);
   logMessageTaskHandle = osThreadCreate(osThread(logMessageTask), NULL);
 
-  /* definition and creation of clientTask */
-  osThreadDef(clientTask, StartClientTask, osPriorityNormal, 0, 1024);
-  clientTaskHandle = osThreadCreate(osThread(clientTask), NULL);
+  /* definition and creation of TCPClientTask */
+  osThreadDef(TCPClientTask, TCP_ClientTask, osPriorityNormal, 0, 1024);
+  TCPClientTaskHandle = osThreadCreate(osThread(TCPClientTask), NULL);
 
-  /* definition and creation of serverTask */
-  osThreadDef(serverTask, StartServerTask, osPriorityNormal, 0, 1024);
-  serverTaskHandle = osThreadCreate(osThread(serverTask), NULL);
+  /* definition and creation of TCPServerTask */
+  osThreadDef(TCPServerTask, TCP_ServerTask, osPriorityNormal, 0, 1024);
+  TCPServerTaskHandle = osThreadCreate(osThread(TCPServerTask), NULL);
 
   /* definition and creation of heartBeatTask */
   osThreadDef(heartBeatTask, StartHeartBeatTask, osPriorityBelowNormal, 0, 512);
@@ -230,9 +232,13 @@ int main(void)
   osThreadDef(AccelerometerTask, vAccelerometerTask, osPriorityNormal, 0, 2048);
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
-  /* definition and creation of PublishToBroadcastTask */
-  osThreadDef(PublishToBroadcastTask, vPublishToBroadcastTask, osPriorityNormal, 0, 4096);
-  PublishToBroadcastTaskHandle = osThreadCreate(osThread(PublishToBroadcastTask), NULL);
+  /* definition and creation of PublishtoBroadcastTask */
+  osThreadDef(PublishtoBroadcastTask, PublishToBroadcastTask, osPriorityNormal, 0, 4096);
+  PublishtoBroadcastTaskHandle = osThreadCreate(osThread(PublishtoBroadcastTask), NULL);
+
+  /* definition and creation of UDPServerTask */
+  osThreadDef(UDPServerTask, UDP_ServerTask, osPriorityIdle, 0, 1024);
+  UDPServerTaskHandle = osThreadCreate(osThread(UDPServerTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 
@@ -888,58 +894,57 @@ void LogMessageTask(void const * argument)
   /* USER CODE END LogMessageTask */
 }
 
-/* USER CODE BEGIN Header_StartClientTask */
+/* USER CODE BEGIN Header_TCP_ClientTask */
 /**
-* @brief Function implementing the clientTask thread.
+* @brief Function implementing the TCPClientTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartClientTask */
-void StartClientTask(void const * argument)
+/* USER CODE END Header_TCP_ClientTask */
+void TCP_ClientTask(void const * argument)
 {
-  /* USER CODE BEGIN StartClientTask */
+  /* USER CODE BEGIN TCP_ClientTask */
 	struct netconn *conn;
 	ip_addr_t server_ip;
 	err_t err;
-	IP4_ADDR(&server_ip, 192, 168, 129, 18);
+	IP4_ADDR(&server_ip, 192, 168, 1, 44);
 
-	  for(;;)
-	  {
-		  conn = netconn_new(NETCONN_TCP);
-		  if (conn != NULL) {
-			  err = netconn_connect(conn, &server_ip, 1234);
-			  if (err == ERR_OK) {
-				  const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
-				  log_message("[CLIENT] Sending : %s...\r\n", json);
-				  netconn_write(conn, json, strlen(json), NETCONN_COPY);
-				  osDelay(1000);
-			  }
-			  else {
-				  log_message("[CLIENT] Could not reach server.\r\n");
-			  }
-			  netconn_close(conn);
-			  netconn_delete(conn);
+	for(;;)
+	{
+		conn = netconn_new(NETCONN_TCP);
+		if (conn != NULL) {
+			err = netconn_connect(conn, &server_ip, 1234);
+			if (err == ERR_OK) {
+				const char *json = "{\"type\": data, \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
+				log_message("[CLIENT] Sending : %s...\r\n", json);
+				netconn_write(conn, json, strlen(json), NETCONN_COPY);
+				osDelay(1000);
+			}
+			else {
+				log_message("[CLIENT] Could not reach server.\r\n");
+			}
+			netconn_close(conn);
+			netconn_delete(conn);
 		  }
 		  else {
 			  log_message("[CLIENT] No connection available.\r\n");
 		  }
-		  osDelay(200);
+		osDelay(200);
 
-	  }
-
-  /* USER CODE END StartClientTask */
+	}
+  /* USER CODE END TCP_ClientTask */
 }
 
-/* USER CODE BEGIN Header_StartServerTask */
+/* USER CODE BEGIN Header_TCP_ServerTask */
 /**
-* @brief Function implementing the serverTask thread.
+* @brief Function implementing the TCPServerTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartServerTask */
-void StartServerTask(void const * argument)
+/* USER CODE END Header_TCP_ServerTask */
+void TCP_ServerTask(void const * argument)
 {
-  /* USER CODE BEGIN StartServerTask */
+  /* USER CODE BEGIN TCP_ServerTask */
 	struct netconn *conn, *newconn;
 	struct netbuf *buf;
 	char *data;
@@ -950,25 +955,25 @@ void StartServerTask(void const * argument)
 	netconn_set_recvtimeout(conn, 1000);
 	/* Infinite loop inside task */
 	for(;;) {
+
 		if (netconn_accept(conn, &newconn) == ERR_OK) {
+
 			if (netconn_recv(newconn, &buf) == ERR_OK) {
-				netbuf_data(buf, (void**)&data, &len);
-				data[len] = '\0';
-				log_message("[SERVER] Received : %s\r\n.", data);
-				netbuf_delete(buf);
-			}
+					netbuf_data(buf, (void**)&data, &len);
+					data[len] = '\0';
+					log_message("[SERVER] Received : %s\r\n.", data);
+					netbuf_delete(buf);
+				}
 			else {
 				log_message("[SERVER] No reception.\r\n");
 			}
 			netconn_close(newconn);
 			netconn_delete(newconn);
+		}
+		else {/* no client connection at the moment*/ }
+		osDelay(2000);
 	}
-	else {
-	// no client connection at the moment
-	}
-	osDelay(2000);
-	}
-  /* USER CODE END StartServerTask */
+  /* USER CODE END TCP_ServerTask */
 }
 
 /* USER CODE BEGIN Header_StartHeartBeatTask */
@@ -1072,23 +1077,22 @@ void vAccelerometerTask(void const * argument)
 	  uint32_t d_VRMS_Z = (uint32_t)VRMS_Z;
 	  uint32_t u_VRMS_Z = (uint32_t)((VRMS_Z-d_VRMS_Z)*1000);
 
-	  log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
+	  // log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
 
   }
   /* USER CODE END vAccelerometerTask */
 }
 
-/* USER CODE BEGIN Header_vPublishToBroadcastTask */
+/* USER CODE BEGIN Header_PublishToBroadcastTask */
 /**
-* @brief Function implementing the PublishToBroadcastTask thread.
+* @brief Function implementing the PublishtoBroadcastTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_vPublishToBroadcastTask */
-void vPublishToBroadcastTask(void const * argument)
+/* USER CODE END Header_PublishToBroadcastTask */
+void PublishToBroadcastTask(void const * argument)
 {
-  /* USER CODE BEGIN vPublishToBroadcastTask */
-
+  /* USER CODE BEGIN PublishToBroadcastTask */
 	struct udp_pcb *udp;
 	struct pbuf *p;
 
@@ -1108,39 +1112,57 @@ void vPublishToBroadcastTask(void const * argument)
 	printf("Flags netif: 0x%X\n", netif_default->flags);
 
 	if (!udp) {
-	   log_message("UDP alloc failed!\r\n");
-	   vTaskDelete(NULL);
+		log_message("UDP alloc failed!\r\n");
+		vTaskDelete(NULL);
 	}
 	//udp_connect(udp, &dest_ip, 1234);
 	udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
 
 	/* Infinite loop */
-		for(;;)
-		{
-			char json_msg[256];
-			len=snprintf(json_msg, sizeof(json_msg),"{"
-      		   "\"type\":\"presence\","
-       		   "\"id\":\"%s\","
-       		   "\"ip\":\"%s\","
-       		   "\"timestamp\":\"2025-10-02T08:20:00Z\""
-       		 "}",
-			 device_id,
-	         my_ip//,
-	         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
-	        );
+	for(;;)
+	{
+		char json_msg[256];
+		len=snprintf(json_msg, sizeof(json_msg),"{"
+				"\"type\":\"presence\","
+				"\"id\":\"%s\","
+				"\"ip\":\"%s\","
+				"\"timestamp\":\"2025-10-02T08:20:00Z\""
+				"}",
+				 device_id,
+		         my_ip//,
+		         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
+		        );
 
 
-	     p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
-	     if (!p) continue;
-	     pbuf_take(p, json_msg, len);
-	     udp_sendto(udp, p, &dest_ip, 1234);
+		p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
+		if (!p) continue;
+		pbuf_take(p, json_msg, len);
+		udp_sendto(udp, p, &dest_ip, 1234);
 
-	     pbuf_free(p);
+		pbuf_free(p);
 
 
-	     osDelay(10000);
-		 }
-  /* USER CODE END vPublishToBroadcastTask */
+		osDelay(10000);
+	 }
+  /* USER CODE END PublishToBroadcastTask */
+}
+
+/* USER CODE BEGIN Header_UDP_ServerTask */
+/**
+* @brief Function implementing the UDPServerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_UDP_ServerTask */
+void UDP_ServerTask(void const * argument)
+{
+  /* USER CODE BEGIN UDP_ServerTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END UDP_ServerTask */
 }
 
 /**
