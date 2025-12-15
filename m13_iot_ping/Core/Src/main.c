@@ -49,6 +49,11 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+// For TCP & UDP
+#define PORT	1234
+#define Max_IP	30
+
+
 // For NTP
 #define NTP_SERVER_IP        "129.6.15.28"
 #define NTP_PORT             123
@@ -111,6 +116,9 @@ osSemaphoreId AdcEndOfConversionHandle;
 struct udp_pcb *ntp_pcb;
 uint8_t ntp_packet[NTP_PACKET_LEN];
 volatile uint8_t is_synced = 0;
+
+// To bank the IP adress
+ip_addr_t IP_Bank[Max_IP] = {0};
 
 
 
@@ -893,7 +901,7 @@ void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
 		sDate.Date = timeinfo->tm_mday;
 		sDate.WeekDay = timeinfo->tm_wday + 1;
 
-		log_message("[NTP] -> %d\r\n", sTime.Seconds);
+		log_message("[NTP] Time et date bien reçu");
 
 		is_synced = 1;
 	}
@@ -931,11 +939,10 @@ void StartDefaultTask(void const * argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   osDelay(200);
-  // ntp_send_request();
+  ntp_send_request();
   /* Infinite loop */
   for(;;)
   {
-	  ntp_send_request();
     osDelay(1000);
   }
   /* USER CODE END 5 */
@@ -977,37 +984,43 @@ void TCP_ClientTask(void const * argument)
 {
   /* USER CODE BEGIN TCP_ClientTask */
 	struct netconn *conn;
-	ip_addr_t server_ip;
+	//ip_addr_t server_ip;
 	err_t err;
-	IP4_ADDR(&server_ip, 192, 168, 1, 180);
+	//IP4_ADDR(&server_ip, 192, 168, 1, 181);
 
 	for(;;)
 	{
-		conn = netconn_new(NETCONN_TCP);
-		if (conn != NULL) {
-			err = netconn_connect(conn, &server_ip, 1234);
+		// Send to all the IP from the IP bank
+		for (uint8_t i=0;i<Max_IP;i++){
+			if (ip_addr_isany(&IP_Bank[i])){break;} // If the IP position 'i' is 000.000.000.000 (not set yet) - ip_addr_isany return 1 when no adress ip is set
 
-			if (err != ERR_OK) {
-			    log_message("[CLIENT] Send error: %d\r\n", err);
-			}
+			conn = netconn_new(NETCONN_TCP);
+			if (conn != NULL) {
+				err = netconn_connect(conn, &IP_Bank[i], PORT);
+
+				if (err != ERR_OK) {
+					log_message("[CLIENT] Send error: %d\r\n", err);
+				}
 
 
-			if (err == ERR_OK) {
-				const char *json = "{\"type\": \"data\", \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
-				log_message("[CLIENT] Sending : %s...\r\n", json);
-				netconn_write(conn, json, strlen(json), NETCONN_COPY);
-				osDelay(3000);
+				if (err == ERR_OK) {
+					const char *json = "{\"type\": \"data\", \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
+					log_message("[CLIENT] Sending : %s...\r\n", json);
+					netconn_write(conn, json, strlen(json), NETCONN_COPY);
+					osDelay(3000);
+				}
+				else {
+					log_message("[CLIENT] Could not reach server.\r\n");
+				}
+				netconn_close(conn);
+				netconn_delete(conn);
 			}
 			else {
-				log_message("[CLIENT] Could not reach server.\r\n");
+				log_message("[CLIENT] No connection available.\r\n");
 			}
-			netconn_close(conn);
-			netconn_delete(conn);
-		  }
-		  else {
-			  log_message("[CLIENT] No connection available.\r\n");
-		  }
-		osDelay(20);
+			osDelay(20);
+		}
+		osDelay(5000);
 
 	}
   /* USER CODE END TCP_ClientTask */
@@ -1028,7 +1041,7 @@ void TCP_ServerTask(void const * argument)
 	char *data;
 	u16_t len;
 	conn = netconn_new(NETCONN_TCP);
-	netconn_bind(conn, IP_ADDR_ANY, 1234);
+	netconn_bind(conn, IP_ADDR_ANY, PORT);
 	netconn_listen(conn);
 	netconn_set_recvtimeout(conn, 2000);
 	/* Infinite loop inside task */
@@ -1174,7 +1187,6 @@ void PublishToBroadcastTask(void const * argument)
 	log_message("Broadcast task started.\r\n");
 
 	udp = udp_new();
-	//udp_setflags(udp, UDP_FLAGS_BROADCAST);
 	ip_set_option(udp, SOF_BROADCAST);
 	printf("Flags netif: 0x%X\n", netif_default->flags);
 
@@ -1196,15 +1208,14 @@ void PublishToBroadcastTask(void const * argument)
 				"\"timestamp\":\"2025-10-02T08:20:00Z\""
 				"}",
 				 device_id,
-		         my_ip//,
-		         //get_timestamp() // A faire avec la RTC //"\"timestamp\":\"%s\""
+		         my_ip
 		        );
 
 
 		p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
 		if (!p) continue;
 		pbuf_take(p, json_msg, len);
-		udp_sendto(udp, p, &dest_ip, 1234);
+		udp_sendto(udp, p, &dest_ip, PORT);
 
 		pbuf_free(p);
 
@@ -1236,7 +1247,7 @@ void UDP_ServerTask(void const * argument)
 	        vTaskDelete(NULL);
 	    }
 
-	    netconn_bind(conn, IP_ADDR_ANY, 1234);
+	    netconn_bind(conn, IP_ADDR_ANY, PORT);
 	    netconn_set_recvtimeout(conn, 15000);
 
 	    log_message("[UDP SERVER] Broadcast listener started on port 5005\r\n");
@@ -1249,8 +1260,27 @@ void UDP_ServerTask(void const * argument)
 	        {
 	            netbuf_data(buf, (void**)&data, &len);
 	            data[len] = '\0';
+	            ip_addr_t src_ip_copy = *netbuf_fromaddr(buf);		// Get the IP adress of the sender
 
-	            log_message("[UDP SERVER] Broadcast received: %s\r\n", data);
+	            // Check if the IP adress is already known
+	            uint8_t AlreadyKnown = 0;
+	            for (uint8_t i = 0; i < Max_IP; i++) {
+	                if (!ip_addr_isany(&IP_Bank[i]) && ip_addr_cmp(&IP_Bank[i], &src_ip_copy)) {
+	                	AlreadyKnown = 1;
+	                	log_message("[UDP SERVER] Broadcast received, IP already known");
+	                    break;
+	                }
+	            }
+	            // If not known, store it (need to put it after all the already stored IP adress
+	            if (!AlreadyKnown) {
+	                for (uint8_t i = 0; i < Max_IP; i++) {
+	                    if (ip_addr_isany(&IP_Bank[i])) {
+	                        IP_Bank[i] = src_ip_copy;
+	                        log_message("[UDP SERVER] Broadcast received, IP memorized");
+	                        break;
+	                    }
+	                }
+	            }
 
 	            netbuf_delete(buf);
 	        }
