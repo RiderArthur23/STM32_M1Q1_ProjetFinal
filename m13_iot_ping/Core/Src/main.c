@@ -122,10 +122,6 @@ ip_addr_t IP_Bank[Max_IP] = {0};
 
 
 
-volatile uint16_t ConversionTable[300];
-
-
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -885,12 +881,14 @@ void ntp_send_request(void)
 
 void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
 
+	// Code given by the teacher
 	if (p->len >= 48) {
 		uint32_t timestamp;
 		memcpy(&timestamp, (uint8_t *)p->payload + 40, 4);
 		timestamp = ntohl(timestamp) - NTP_TIMESTAMP_DELTA;
 		time_t rawtime = timestamp;
 		struct tm *timeinfo = gmtime(&rawtime);
+		/*
 		RTC_TimeTypeDef sTime;
 		RTC_DateTypeDef sDate;
 		sTime.Hours = timeinfo->tm_hour;
@@ -899,9 +897,11 @@ void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
 		sDate.Year = timeinfo->tm_year - 100; // STM32: année depuis 2000
 		sDate.Month = timeinfo->tm_mon + 1;
 		sDate.Date = timeinfo->tm_mday;
-		sDate.WeekDay = timeinfo->tm_wday + 1;
+		sDate.WeekDay = timeinfo->tm_wday + 1;*/
 
-		log_message("[NTP] Time et date bien reçu");
+		Set_RTC(timeinfo->tm_sec, timeinfo->tm_min, timeinfo->tm_hour, timeinfo->tm_year - 100, timeinfo->tm_mon + 1, timeinfo->tm_mday, timeinfo->tm_wday + 1);
+
+		log_message("[NTP] Time et date bien reçu et mis en memoire de la RTC");
 
 		is_synced = 1;
 	}
@@ -937,13 +937,17 @@ void StartDefaultTask(void const * argument)
 {
   /* init code for LWIP */
   MX_LWIP_Init();
+  Init_RTC();
+  Init_FRAM();
   /* USER CODE BEGIN 5 */
   osDelay(200);
   ntp_send_request();
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1000);
+	  // Faire le traitement des données reçue ici (comparaison des valeurs reçues et les mettre en mémoire
+	  // Faire un appel de fonction pour un message d'alerte à envoyer sur le broadcast ?
+	  osDelay(1000);
   }
   /* USER CODE END 5 */
 }
@@ -992,15 +996,13 @@ void TCP_ClientTask(void const * argument)
 	{
 		// Send to all the IP from the IP bank
 		for (uint8_t i=0;i<Max_IP;i++){
-			if (ip_addr_isany(&IP_Bank[i])){break;} // If the IP position 'i' is 000.000.000.000 (not set yet) - ip_addr_isany return 1 when no adress ip is set
+			if (ip_addr_isany(&IP_Bank[i])){break;} // If the IP position 'i' is 000.000.000.000 (not set yet), ip_addr_isany return 1
 
 			conn = netconn_new(NETCONN_TCP);
 			if (conn != NULL) {
 				err = netconn_connect(conn, &IP_Bank[i], PORT);
 
-				if (err != ERR_OK) {
-					log_message("[CLIENT] Send error: %d\r\n", err);
-				}
+				if (err != ERR_OK) {log_message("[CLIENT] Send error: %d\r\n", err);}
 
 
 				if (err == ERR_OK) {
@@ -1009,15 +1011,11 @@ void TCP_ClientTask(void const * argument)
 					netconn_write(conn, json, strlen(json), NETCONN_COPY);
 					osDelay(3000);
 				}
-				else {
-					log_message("[CLIENT] Could not reach server.\r\n");
-				}
+				else {log_message("[CLIENT] Could not reach server.\r\n");}
 				netconn_close(conn);
 				netconn_delete(conn);
 			}
-			else {
-				log_message("[CLIENT] No connection available.\r\n");
-			}
+			else {log_message("[CLIENT] No connection available.\r\n");}
 			osDelay(20);
 		}
 		osDelay(5000);
@@ -1052,7 +1050,10 @@ void TCP_ServerTask(void const * argument)
 			if (netconn_recv(newconn, &buf) == ERR_OK) {
 					netbuf_data(buf, (void**)&data, &len);
 					data[len] = '\0';
+
+					// Recevoir les données des messages PtoP et les stockées ici
 					log_message("[SERVER] Received : %s\r\n.", data);
+
 					netbuf_delete(buf);
 				}
 			else {
@@ -1097,15 +1098,18 @@ void vAccelerometerTask(void const * argument)
 {
   /* USER CODE BEGIN vAccelerometerTask */
 
+	uint16_t ConversionTable[300];
+
 	HAL_TIM_Base_Start(&htim2);
 	HAL_ADC_Start_DMA(&hadc1, ConversionTable, 300);
 
   /* Infinite loop */
   for(;;)
   {
+	  // Wait till the semaphore is set by the interruption of the end of the conversion
 	  osSemaphoreWait(AdcEndOfConversionHandle, osWaitForever);
 
-		  /*	Reorganize the values from the DMA buffer		*/
+		  /*	Reorganize the values from the DMA buffer in appropriate buffers		*/
 	  uint16_t X[100], Y[100], Z[100];
 
 	  for (int i=0;i<100;i++){
@@ -1132,9 +1136,7 @@ void vAccelerometerTask(void const * argument)
 	  }
 
 	  /*	Calculations of the RMS values		*/
-	  float SumSquareX = 0;
-	  float SumSquareY = 0;
-	  float SumSquareZ = 0;
+	  float SumSquareX = 0, SumSquareY = 0, SumSquareZ = 0;
 
 	  for (int i=0;i<100;i++){
 		  SumSquareX += MovingAverage_X[i]*MovingAverage_X[i];
