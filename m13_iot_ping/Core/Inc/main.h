@@ -39,7 +39,7 @@ extern "C" {
 
 typedef struct {
     uint8_t id;
-    char text[128];
+    char text[512];
 } Message_t;
 
 

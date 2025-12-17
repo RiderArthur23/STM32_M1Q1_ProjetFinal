@@ -112,6 +112,10 @@ osSemaphoreId AdcEndOfConversionHandle;
 
 // ADC variables
 
+// For UDP
+const char *device_id = "nucleo-14";
+const char *my_ip = "192.168.1.185";
+
 // For NTP
 struct udp_pcb *ntp_pcb;
 uint8_t ntp_packet[NTP_PACKET_LEN];
@@ -120,7 +124,17 @@ volatile uint8_t is_synced = 0;
 // To bank the IP adress
 ip_addr_t IP_Bank[Max_IP] = {0};
 
+// For read RTC
+uint8_t seconds, minutes, hours, day, date, month, years;
 
+// To store de RMS result
+float VRMS_X = 0;
+float VRMS_Y = 0;
+float VRMS_Z = 0;
+
+uint16_t MaxRMS_X[10]={0};
+uint16_t MaxRMS_Y[10]={0};
+uint16_t MaxRMS_Z[10]={0};
 
 /* USER CODE END PV */
 
@@ -152,6 +166,7 @@ void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
 
 
 uint8_t DecimalToBCD(uint8_t decimal);
+uint8_t BCDToDecimal(uint8_t BCD);
 uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax);
 
 
@@ -227,7 +242,7 @@ int main(void)
 
   /* Create the queue(s) */
   /* definition and creation of messageQueue */
-  osMessageQDef(messageQueue, 16, uint32_t);
+  osMessageQDef(messageQueue, 512, uint32_t);
   messageQueueHandle = osMessageCreate(osMessageQ(messageQueue), NULL);
 
   /* USER CODE BEGIN RTOS_QUEUES */
@@ -240,7 +255,7 @@ int main(void)
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
-  osThreadDef(logMessageTask, LogMessageTask, osPriorityNormal, 0, 1024);
+  osThreadDef(logMessageTask, LogMessageTask, osPriorityNormal, 0, 2048);
   logMessageTaskHandle = osThreadCreate(osThread(logMessageTask), NULL);
 
   /* definition and creation of TCPClientTask */
@@ -364,7 +379,7 @@ static void MX_ADC1_Init(void)
   */
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV6;
-  hadc1.Init.Resolution = ADC_RESOLUTION_10B;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
@@ -777,7 +792,7 @@ void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8
 
 	// Sent all the BCD values to the RTC
 	uint8_t tdata[] = {RTC_adr_seconds, BCD_seconds, BCD_minutes, BCD_hours, BCD_day, BCD_date, BCD_month, BCD_years};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 8, 1000);
+	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, sizeof(tdata), 1000);
 }
 
 
@@ -791,16 +806,16 @@ void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours, uint8_t *day, 
 	uint8_t tdata[] = {RTC_adr_seconds};
 	uint8_t rdata[7] = {0};
 	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 1, 1000);
-	HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 2, 1000);
+	HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 7, 1000);
 
 	// Store the converted BCD values into the corresponding output pointers
-	*seconds = DecimalToBCD(rdata[0]);
-	*minutes = DecimalToBCD(rdata[1]);
-	*hours = DecimalToBCD(rdata[2]);
-	*day = DecimalToBCD(rdata[3]);
-	*date = DecimalToBCD(rdata[4]);
-	*month = DecimalToBCD(rdata[5]);
-	*years = DecimalToBCD(rdata[6]);
+	*seconds = BCDToDecimal(rdata[0]);
+	*minutes = BCDToDecimal(rdata[1]);
+	*hours = BCDToDecimal(rdata[2]);
+	*day = BCDToDecimal(rdata[3]);
+	*date = BCDToDecimal(rdata[4]);
+	*month = BCDToDecimal(rdata[5]);
+	*years = BCDToDecimal(rdata[6]);
 }
 
 uint8_t DecimalToBCD(uint8_t decimal)
@@ -856,58 +871,72 @@ void Read_FRAM(void)
 
 void ntp_send_request(void)
 {
-	ip_addr_t ntp_addr;
+    ip_addr_t ntp_addr;
 
-	ntp_pcb = udp_new();
-	if (ntp_pcb == NULL) return;
+    ntp_pcb = udp_new();
+    if (ntp_pcb == NULL) {
+        log_message("NTP: udp_new failed\r\n");
+        return;
+    }
 
-	udp_recv(ntp_pcb, ntp_receive, NULL);
+    udp_bind(ntp_pcb, IP_ADDR_ANY, 0);
 
-	memset(ntp_packet, 0, NTP_PACKET_LEN);
+    udp_recv(ntp_pcb, ntp_receive, NULL);
 
-	ntp_packet[0] = 0x1B;  // LI = 0, VN = 3, Mode = 3 (client)
+    memset(ntp_packet, 0, NTP_PACKET_LEN);
+    ntp_packet[0] = 0x1B;
 
-	ipaddr_aton(NTP_SERVER_IP, &ntp_addr);
+    ipaddr_aton(NTP_SERVER_IP, &ntp_addr);
 
-	struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, NTP_PACKET_LEN, PBUF_RAM);
-	if (p == NULL) return;
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, NTP_PACKET_LEN, PBUF_RAM);
+    if (p == NULL) {
+        log_message("NTP: pbuf_alloc failed\r\n");
+        udp_remove(ntp_pcb);
+        return;
+    }
 
-	memcpy(p->payload, ntp_packet, NTP_PACKET_LEN);
+    memcpy(p->payload, ntp_packet, NTP_PACKET_LEN);
 
-	udp_sendto(ntp_pcb, p, &ntp_addr, NTP_PORT);
-	pbuf_free(p);
+    udp_sendto(ntp_pcb, p, &ntp_addr, NTP_PORT);
+    pbuf_free(p);
+
+    log_message("NTP request sent to %s\r\n", ipaddr_ntoa(&ntp_addr));
 }
 
 
-void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
 
-	// Code given by the teacher
-	if (p->len >= 48) {
-		uint32_t timestamp;
-		memcpy(&timestamp, (uint8_t *)p->payload + 40, 4);
-		timestamp = ntohl(timestamp) - NTP_TIMESTAMP_DELTA;
-		time_t rawtime = timestamp;
-		struct tm *timeinfo = gmtime(&rawtime);
-		/*
-		RTC_TimeTypeDef sTime;
-		RTC_DateTypeDef sDate;
-		sTime.Hours = timeinfo->tm_hour;
-		sTime.Minutes = timeinfo->tm_min;
-		sTime.Seconds = timeinfo->tm_sec;
-		sDate.Year = timeinfo->tm_year - 100; // STM32: année depuis 2000
-		sDate.Month = timeinfo->tm_mon + 1;
-		sDate.Date = timeinfo->tm_mday;
-		sDate.WeekDay = timeinfo->tm_wday + 1;*/
+void ntp_receive(void *arg, struct udp_pcb *pcb,
+                 struct pbuf *p, const ip_addr_t *addr, u16_t port)
+{
+    log_message("NTP response received from %s:%d\r\n",
+                ipaddr_ntoa(addr), port);
 
-		Set_RTC(timeinfo->tm_sec, timeinfo->tm_min, timeinfo->tm_hour, timeinfo->tm_year - 100, timeinfo->tm_mon + 1, timeinfo->tm_mday, timeinfo->tm_wday + 1);
+    if (p->len >= 48) {
+        uint32_t timestamp;
+        memcpy(&timestamp, (uint8_t *)p->payload + 40, 4);
+        timestamp = ntohl(timestamp) - NTP_TIMESTAMP_DELTA;
 
-		log_message("[NTP] Time et date bien reçu et mis en memoire de la RTC");
+        time_t rawtime = timestamp;
+        struct tm *timeinfo = gmtime(&rawtime);
 
-		is_synced = 1;
-	}
-	pbuf_free(p);
-	udp_remove(pcb);
+        Set_RTC(
+            timeinfo->tm_sec,
+            timeinfo->tm_min,
+            timeinfo->tm_hour,
+            timeinfo->tm_wday,
+            timeinfo->tm_mday,
+            timeinfo->tm_mon + 1,
+            timeinfo->tm_year - 100
+        );
+
+        is_synced = 1;
+        log_message("RTC synced with NTP\r\n");
+    }
+
+    pbuf_free(p);
+    udp_remove(pcb);   // OK pour one-shot
 }
+
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
     if (hadc == &hadc1){
@@ -937,15 +966,18 @@ void StartDefaultTask(void const * argument)
 {
   /* init code for LWIP */
   MX_LWIP_Init();
-  Init_RTC();
-  Init_FRAM();
   /* USER CODE BEGIN 5 */
-  osDelay(200);
+  osDelay(2000);
   ntp_send_request();
+
   /* Infinite loop */
   for(;;)
   {
-	  // Faire le traitement des données reçue ici (comparaison des valeurs reçues et les mettre en mémoire
+
+	  // Regarder si les valeurs actuelles RMS sont plus grands que les 10 enregistrées
+
+	  // Si une valeur dépasse le seuil, vérifier avec les valeur des autres par rapport au timestamp (en mémoire)
+
 	  // Faire un appel de fonction pour un message d'alerte à envoyer sur le broadcast ?
 	  osDelay(1000);
   }
@@ -1006,8 +1038,34 @@ void TCP_ClientTask(void const * argument)
 
 
 				if (err == ERR_OK) {
-					const char *json = "{\"type\": \"data\", \"payload\":\"1.1;1.2;1.3;10.9;10.8;10.7\"}";
-					log_message("[CLIENT] Sending : %s...\r\n", json);
+					char json[256];
+
+					snprintf(json, sizeof(json),
+					    "{"
+					    "\"type\":\"data\","
+					    "\"id\":\"%s\","
+					    "\"ip\":\"%s\","
+					    "\"timestamp\":\"20%02d-%02d-%02dT%02d:%02d:%02dZ\","
+					    "\"acceleration\":{"
+					        "\"x\":%.3f,"
+					        "\"y\":%.3f,"
+					        "\"z\":%.3f"
+					    "}"
+					    "}",
+					    device_id,
+					    my_ip,
+					    years,
+					    month,
+					    date,
+					    hours,
+					    minutes,
+					    seconds,
+					    VRMS_X,
+					    VRMS_Y,
+					    VRMS_Z
+					);
+
+					// log_message("[CLIENT] Sending : %s...\r\n", json);
 					netconn_write(conn, json, strlen(json), NETCONN_COPY);
 					osDelay(3000);
 				}
@@ -1144,23 +1202,21 @@ void vAccelerometerTask(void const * argument)
 		  SumSquareZ += MovingAverage_Z[i]*MovingAverage_Z[i];
 	  }
 
-	  float VRMS_X = sqrtf(SumSquareX / 100.0f);
-	  float VRMS_Y = sqrtf(SumSquareY / 100.0f);
-	  float VRMS_Z = sqrtf(SumSquareZ / 100.0f);
-
+	  VRMS_X = sqrtf(SumSquareX / 100.0f);
+	  VRMS_Y = sqrtf(SumSquareY / 100.0f);
+	  VRMS_Z = sqrtf(SumSquareZ / 100.0f);
 
 	  /*	Need a bit of processt to send the data to UART		*/
-	  uint32_t d_VRMS_X = (uint32_t)VRMS_X;
-	  uint32_t u_VRMS_X = (uint32_t)((VRMS_X-d_VRMS_X)*1000);
+	  	  uint32_t d_VRMS_X = (uint32_t)VRMS_X;
+	  	  uint32_t u_VRMS_X = (uint32_t)((VRMS_X-d_VRMS_X)*1000);
 
-	  uint32_t d_VRMS_Y = (uint32_t)VRMS_Y;
-	  uint32_t u_VRMS_Y = (uint32_t)((VRMS_Y-d_VRMS_Y)*1000);
+	  	  uint32_t d_VRMS_Y = (uint32_t)VRMS_Y;
+	  	  uint32_t u_VRMS_Y = (uint32_t)((VRMS_Y-d_VRMS_Y)*1000);
 
-	  uint32_t d_VRMS_Z = (uint32_t)VRMS_Z;
-	  uint32_t u_VRMS_Z = (uint32_t)((VRMS_Z-d_VRMS_Z)*1000);
+	  	  uint32_t d_VRMS_Z = (uint32_t)VRMS_Z;
+	  	  uint32_t u_VRMS_Z = (uint32_t)((VRMS_Z-d_VRMS_Z)*1000);
 
-	  // log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
-
+	  	  log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
   }
   /* USER CODE END vAccelerometerTask */
 }
@@ -1177,11 +1233,7 @@ void PublishToBroadcastTask(void const * argument)
   /* USER CODE BEGIN PublishToBroadcastTask */
 	struct udp_pcb *udp;
 	struct pbuf *p;
-
-	const char *device_id = "nucleo-14";
-	const char *my_ip = "192.168.1.185";
 	uint16_t len=0;
-	uint16_t err=0;
 	ip_addr_t dest_ip;
 
 	IP4_ADDR(&dest_ip, 192,168,1,255);
@@ -1196,22 +1248,32 @@ void PublishToBroadcastTask(void const * argument)
 		log_message("UDP alloc failed!\r\n");
 		vTaskDelete(NULL);
 	}
-	//udp_connect(udp, &dest_ip, 12345);
 	udp_bind(udp, IP_ADDR_ANY, 0);     // port source aléatoire
 
 	/* Infinite loop */
 	for(;;)
 	{
+		// Read the data from the RTC and stock to the adress of these global variables
+		Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
+
 		char json_msg[256];
-		len=snprintf(json_msg, sizeof(json_msg),"{"
-				"\"type\":\"presence\","
-				"\"id\":\"%s\","
-				"\"ip\":\"%s\","
-				"\"timestamp\":\"2025-10-02T08:20:00Z\""
-				"}",
-				 device_id,
-		         my_ip
-		        );
+
+		len = snprintf(json_msg, sizeof(json_msg),
+		    "{"
+		    "\"type\":\"presence\","
+		    "\"id\":\"%s\","
+		    "\"ip\":\"%s\","
+		    "\"timestamp\":\"20%02d-%02d-%02dT%02d:%02d:%02dZ\""
+		    "}",
+		    device_id,
+		    my_ip,
+		    years,
+		    month,
+		    date,
+		    hours,
+		    minutes,
+		    seconds
+		);
 
 
 		p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
@@ -1252,7 +1314,7 @@ void UDP_ServerTask(void const * argument)
 	    netconn_bind(conn, IP_ADDR_ANY, PORT);
 	    netconn_set_recvtimeout(conn, 15000);
 
-	    log_message("[UDP SERVER] Broadcast listener started on port 5005\r\n");
+	    // log_message("[UDP SERVER] Broadcast listener started on port 5005\r\n");
 
 	    for (;;)
 	    {
@@ -1269,7 +1331,7 @@ void UDP_ServerTask(void const * argument)
 	            for (uint8_t i = 0; i < Max_IP; i++) {
 	                if (!ip_addr_isany(&IP_Bank[i]) && ip_addr_cmp(&IP_Bank[i], &src_ip_copy)) {
 	                	AlreadyKnown = 1;
-	                	log_message("[UDP SERVER] Broadcast received, IP already known");
+	                	log_message("[UDP SERVER] Broadcast received, IP already known : %s", ipaddr_ntoa(&src_ip_copy));
 	                    break;
 	                }
 	            }
@@ -1278,7 +1340,7 @@ void UDP_ServerTask(void const * argument)
 	                for (uint8_t i = 0; i < Max_IP; i++) {
 	                    if (ip_addr_isany(&IP_Bank[i])) {
 	                        IP_Bank[i] = src_ip_copy;
-	                        log_message("[UDP SERVER] Broadcast received, IP memorized");
+	                        log_message("[UDP SERVER] Broadcast received, IP memorized : %s", ipaddr_ntoa(&src_ip_copy));
 	                        break;
 	                    }
 	                }
