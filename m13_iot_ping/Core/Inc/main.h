@@ -42,6 +42,18 @@ typedef struct {
     char text[512];
 } Message_t;
 
+typedef struct {
+    uint8_t NucleoID;
+    uint8_t sec;
+    uint8_t min;
+    uint8_t hour;
+    uint8_t wday;
+    uint8_t mday;
+    uint8_t mon;
+    uint8_t year;
+    float LastHighestValue;
+} OtherDevice_t;
+
 
 /* USER CODE END ET */
 

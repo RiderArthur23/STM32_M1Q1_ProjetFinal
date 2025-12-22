@@ -55,7 +55,8 @@
 
 
 // For NTP
-#define NTP_SERVER_IP        "129.6.15.28"
+// #define NTP_SERVER_IP 		 "129.6.15.28"
+#define NTP_SERVER_IP        "216.239.35.0"
 #define NTP_PORT             123
 #define NTP_PACKET_LEN       48
 #define NTP_TIMESTAMP_DELTA  2208988800UL
@@ -800,23 +801,25 @@ void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8
  * uint8_t seconds, minutes, hours, ... ;
  * Read_RTC(&seconds, &minutes, &hours, ...);
  */
-void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours, uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
+void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours,
+              uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
 {
-	// Point to the seconds register then receive the data
-	uint8_t tdata[] = {RTC_adr_seconds};
-	uint8_t rdata[7] = {0};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 1, 1000);
-	HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 7, 1000);
+    uint8_t tdata[] = {RTC_adr_seconds};
+    uint8_t rdata[7] = {0};
 
-	// Store the converted BCD values into the corresponding output pointers
-	*seconds = BCDToDecimal(rdata[0]);
-	*minutes = BCDToDecimal(rdata[1]);
-	*hours = BCDToDecimal(rdata[2]);
-	*day = BCDToDecimal(rdata[3]);
-	*date = BCDToDecimal(rdata[4]);
-	*month = BCDToDecimal(rdata[5]);
-	*years = BCDToDecimal(rdata[6]);
+    HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 1, 1000);
+    HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 7, 1000);
+
+    *seconds = BCDToDecimal(rdata[0] & 0x7F);  // Need to mask the non-used bit
+    *minutes = BCDToDecimal(rdata[1] & 0x7F);
+    *hours   = BCDToDecimal(rdata[2] & 0x3F);
+
+    *day   = BCDToDecimal(rdata[3] & 0x07);
+    *date  = BCDToDecimal(rdata[4] & 0x3F);
+    *month = BCDToDecimal(rdata[5] & 0x1F);
+    *years = BCDToDecimal(rdata[6]);
 }
+
 
 uint8_t DecimalToBCD(uint8_t decimal)
 {
@@ -849,23 +852,27 @@ void Init_FRAM(void)
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
-void Write_FRAM(void)
+void Write_FRAM(uint32_t address, const void *data, uint16_t size)
 {
-	// Envoyer l'opcode d'écriture, la bonne adresse et ce qu'on veut écrire
-	uint8_t tdata[] = {FRAM_opcode_write, (test_adr >> 16),  (test_adr >> 8), test_adr, 14};
+	uint8_t adr[] = {FRAM_opcode_write, (address >> 16),  (address >> 8), address};
+
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, tdata, sizeof(tdata), 1000);
+
+	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
+	HAL_SPI_Transmit(&hspi4, (uint8_t *)data, size, 1000);
+
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
-void Read_FRAM(void)
+void Read_FRAM(uint32_t address, void *data, uint16_t size)
 {
-	// Envoyer l'opcode de lecture avec l'adresse puis se mettre en lecture
-	uint8_t rdata = 0;
-	uint8_t tdata2[] = {FRAM_opcode_read, (test_adr >> 16),  (test_adr >> 8), test_adr};
+	uint8_t adr[] = {FRAM_opcode_read, (address >> 16),  (address >> 8), address};
+
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, tdata2, sizeof(tdata2), 1000);
-	HAL_SPI_Receive(&hspi4, &rdata, sizeof(rdata), 1000);
+
+	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
+	HAL_SPI_Receive(&hspi4, (uint8_t *)data, size, 1000);
+
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
@@ -922,7 +929,7 @@ void ntp_receive(void *arg, struct udp_pcb *pcb,
         Set_RTC(
             timeinfo->tm_sec,
             timeinfo->tm_min,
-            timeinfo->tm_hour,
+            timeinfo->tm_hour+1,
             timeinfo->tm_wday,
             timeinfo->tm_mday,
             timeinfo->tm_mon + 1,
@@ -1038,34 +1045,39 @@ void TCP_ClientTask(void const * argument)
 
 
 				if (err == ERR_OK) {
-					char json[256];
 
+					Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
+					char *status = "normal";
+
+					char json[512];
 					snprintf(json, sizeof(json),
-					    "{"
-					    "\"type\":\"data\","
-					    "\"id\":\"%s\","
-					    "\"ip\":\"%s\","
-					    "\"timestamp\":\"20%02d-%02d-%02dT%02d:%02d:%02dZ\","
-					    "\"acceleration\":{"
-					        "\"x\":%.3f,"
-					        "\"y\":%.3f,"
-					        "\"z\":%.3f"
-					    "}"
-					    "}",
-					    device_id,
-					    my_ip,
-					    years,
-					    month,
-					    date,
-					    hours,
-					    minutes,
-					    seconds,
-					    VRMS_X,
-					    VRMS_Y,
-					    VRMS_Z
+					         "{"
+					           "\"type\":\"data\","
+					           "\"id\":\"%s\","
+					           "\"timestamp\":\"20%d-%d-%dT%d:%d:%dZ\","
+					           "\"acceleration\":{"
+					               "\"x\":%.2f,"
+					               "\"y\":%.2f,"
+					               "\"z\":%.2f"
+					           "},"
+					           "\"status\":\"%s\""
+					         "}",
+					         device_id,
+					         years,
+					         month,
+					         date,
+					         hours,
+					         minutes,
+					         seconds,
+					         VRMS_X,
+					         VRMS_Y,
+					         VRMS_Z,
+							 status
 					);
 
-					// log_message("[CLIENT] Sending : %s...\r\n", json);
+
+
+					log_message("[CLIENT] Sending : %s...\r\n", json);
 					netconn_write(conn, json, strlen(json), NETCONN_COPY);
 					osDelay(3000);
 				}
@@ -1111,6 +1123,11 @@ void TCP_ServerTask(void const * argument)
 
 					// Recevoir les données des messages PtoP et les stockées ici
 					log_message("[SERVER] Received : %s\r\n.", data);
+
+					// Récupérer les valeurs de la variable data
+
+
+					// Enregistrer les valeurs dans la FRAM
 
 					netbuf_delete(buf);
 				}
@@ -1254,7 +1271,7 @@ void PublishToBroadcastTask(void const * argument)
 	for(;;)
 	{
 		// Read the data from the RTC and stock to the adress of these global variables
-		Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
+		//Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
 
 		char json_msg[256];
 
