@@ -1027,9 +1027,7 @@ void TCP_ClientTask(void const * argument)
 {
   /* USER CODE BEGIN TCP_ClientTask */
 	struct netconn *conn;
-	//ip_addr_t server_ip;
 	err_t err;
-	//IP4_ADDR(&server_ip, 192, 168, 1, 181);
 
 	for(;;)
 	{
