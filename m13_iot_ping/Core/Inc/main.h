@@ -43,16 +43,23 @@ typedef struct {
 } Message_t;
 
 typedef struct {
-    uint8_t NucleoID;
+	uint8_t NucleoID;
     uint8_t sec;
     uint8_t min;
     uint8_t hour;
-    uint8_t wday;
     uint8_t mday;
     uint8_t mon;
     uint8_t year;
-    float LastHighestValue;
+    uint8_t status;
+    float LastHighestValue_x;
+	float LastHighestValue_y;
+	float LastHighestValue_z;
 } OtherDevice_t;
+
+
+// Need to be extern beacause used in another .h file
+extern I2C_HandleTypeDef hi2c2;
+extern SPI_HandleTypeDef hspi4;
 
 
 /* USER CODE END ET */

@@ -21,22 +21,29 @@
 #include "cmsis_os.h"
 #include "lwip.h"
 
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdint.h>
 
 // Inlcudes for LWIP
 #include "lwip/udp.h"
 #include "lwip/ip_addr.h"
 #include "lwip/api.h"
-#include <string.h>
 #include <time.h>
+
+// Own .h file
+#include "processing.h"
+#include "communication.h"
 
 
 
 // Additional includes
-#include <math.h>		// (SQRT)
+#include <math.h>
 
 
 /* USER CODE END Includes */
@@ -60,18 +67,6 @@
 #define NTP_PORT             123
 #define NTP_PACKET_LEN       48
 #define NTP_TIMESTAMP_DELTA  2208988800UL
-
-
-#define RTC_adr 			0xD0
-#define	RTC_adr_seconds		0x00
-#define	RTC_adr_minutes		0x01
-#define RTC_adr_TCH2		0x08
-#define	RTC_adr_CFG2		0x09
-
-#define FRAM_opcode_WREN	0x06
-#define FRAM_opcode_write	0x02
-#define FRAM_opcode_read	0x03
-#define test_adr			0xFF
 
 /* USER CODE END PD */
 
@@ -122,10 +117,10 @@ struct udp_pcb *ntp_pcb;
 uint8_t ntp_packet[NTP_PACKET_LEN];
 volatile uint8_t is_synced = 0;
 
-// To bank the IP adress
-ip_addr_t IP_Bank[Max_IP] = {0};
+// All banks
+ip_addr_t IP_Bank[Max_IP] = {0};		// Max_IP set in defines
 
-// For read RTC
+// To read RTC
 uint8_t seconds, minutes, hours, day, date, month, years;
 
 // To store de RMS result
@@ -163,14 +158,6 @@ void UDP_ServerTask(void const * argument);
 // For NTP
 void ntp_send_request(void);
 void ntp_receive(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
-
-
-
-uint8_t DecimalToBCD(uint8_t decimal);
-uint8_t BCDToDecimal(uint8_t BCD);
-uint32_t MAP(uint32_t au32_IN, uint32_t au32_INmin, uint32_t au32_INmax, uint32_t au32_OUTmin, uint32_t au32_OUTmax);
-
-
 
 /* USER CODE END PFP */
 
@@ -774,107 +761,6 @@ void log_message(const char *format, ...) {
 	osMessagePut(messageQueueHandle, (uint32_t)&msg, 0);
 }
 
-void Init_RTC(void){
-	// Init the super capacitor
-	uint8_t tdata_init[] = {RTC_adr_TCH2, 0x20, 0x45};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata_init, 3, 1000);
-}
-
-void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8_t date, uint8_t month, uint8_t years)
-{
-	// Convert decimal values to BCD
-	uint8_t BCD_seconds = DecimalToBCD(seconds);
-	uint8_t BCD_minutes = DecimalToBCD(minutes);
-	uint8_t BCD_hours = DecimalToBCD(hours);
-	uint8_t BCD_day = DecimalToBCD(day);
-	uint8_t BCD_date = DecimalToBCD(date);
-	uint8_t BCD_month = DecimalToBCD(month);
-	uint8_t BCD_years = DecimalToBCD(years);
-
-	// Sent all the BCD values to the RTC
-	uint8_t tdata[] = {RTC_adr_seconds, BCD_seconds, BCD_minutes, BCD_hours, BCD_day, BCD_date, BCD_month, BCD_years};
-	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, sizeof(tdata), 1000);
-}
-
-
-/* Using this function has to be like :
- * uint8_t seconds, minutes, hours, ... ;
- * Read_RTC(&seconds, &minutes, &hours, ...);
- */
-void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours,
-              uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
-{
-    uint8_t tdata[] = {RTC_adr_seconds};
-    uint8_t rdata[7] = {0};
-
-    HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, 1, 1000);
-    HAL_I2C_Master_Receive(&hi2c2, RTC_adr, rdata, 7, 1000);
-
-    *seconds = BCDToDecimal(rdata[0] & 0x7F);  // Need to mask the non-used bit
-    *minutes = BCDToDecimal(rdata[1] & 0x7F);
-    *hours   = BCDToDecimal(rdata[2] & 0x3F);
-
-    *day   = BCDToDecimal(rdata[3] & 0x07);
-    *date  = BCDToDecimal(rdata[4] & 0x3F);
-    *month = BCDToDecimal(rdata[5] & 0x1F);
-    *years = BCDToDecimal(rdata[6]);
-}
-
-
-uint8_t DecimalToBCD(uint8_t decimal)
-{
-	uint8_t d_decimal = decimal / 10;
-	uint8_t u_decimal = (decimal - (d_decimal * 10));
-	uint8_t BCD = (d_decimal << 4) | (u_decimal & 0xF);
-	return BCD;
-}
-
-uint8_t BCDToDecimal(uint8_t BCD)
-{
-	uint8_t d_BCD = BCD >> 4;
-	uint8_t u_BCD = BCD & 0x0F;
-	uint8_t Decimal = (d_BCD * 10) + u_BCD;
-	return Decimal;
-}
-
-void Init_FRAM(void)
-{
-	// Dummy message pour initialiser correctement le SPI
-	uint8_t dummy = 0xFF;
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-	HAL_SPI_Transmit(&hspi4, &dummy, 1, 1000);
-	osDelay(1);
-
-	// Activer WREN
-	uint8_t tdata_init = FRAM_opcode_WREN;
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, &tdata_init, 1, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-}
-
-void Write_FRAM(uint32_t address, const void *data, uint16_t size)
-{
-	uint8_t adr[] = {FRAM_opcode_write, (address >> 16),  (address >> 8), address};
-
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-
-	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
-	HAL_SPI_Transmit(&hspi4, (uint8_t *)data, size, 1000);
-
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-}
-
-void Read_FRAM(uint32_t address, void *data, uint16_t size)
-{
-	uint8_t adr[] = {FRAM_opcode_read, (address >> 16),  (address >> 8), address};
-
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-
-	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
-	HAL_SPI_Receive(&hspi4, (uint8_t *)data, size, 1000);
-
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
-}
 
 void ntp_send_request(void)
 {
@@ -971,11 +857,11 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
-  /* init code for LWIP */
-  MX_LWIP_Init();
-  /* USER CODE BEGIN 5 */
-  osDelay(2000);
-  ntp_send_request();
+	MX_LWIP_Init();
+	osDelay(2000);
+	Init_FRAM();
+	Init_RTC();
+	ntp_send_request();
 
   /* Infinite loop */
   for(;;)
@@ -1050,15 +936,15 @@ void TCP_ClientTask(void const * argument)
 					char json[512];
 					snprintf(json, sizeof(json),
 					         "{"
-					           "\"type\":\"data\","
-					           "\"id\":\"%s\","
-					           "\"timestamp\":\"20%d-%d-%dT%d:%d:%dZ\","
-					           "\"acceleration\":{"
-					               "\"x\":%.2f,"
-					               "\"y\":%.2f,"
-					               "\"z\":%.2f"
+					           "\"type\": \"data\","
+					           "\"id\": \"%s\","
+					           "\"timestamp\": \"20%02d-%02d-%02dT%02d:%02d:%02dZ\","
+					           "\"acceleration\": {"
+					               "\"x\": %.2f,"
+					               "\"y\": %.2f,"
+					               "\"z\": %.2f"
 					           "},"
-					           "\"status\":\"%s\""
+					           "\"status\": \"%s\""
 					         "}",
 					         device_id,
 					         years,
@@ -1116,16 +1002,26 @@ void TCP_ServerTask(void const * argument)
 		if (netconn_accept(conn, &newconn) == ERR_OK) {
 
 			if (netconn_recv(newconn, &buf) == ERR_OK) {
-					netbuf_data(buf, (void**)&data, &len);
-					data[len] = '\0';
+				netbuf_data(buf, (void**)&data, &len);
 
-					// Recevoir les données des messages PtoP et les stockées ici
-					log_message("[SERVER] Received : %s\r\n.", data);
+				    char rx_buffer[512];
+				    if (len >= sizeof(rx_buffer)) len = sizeof(rx_buffer) - 1;
+				    memcpy(rx_buffer, data, len);
+				    rx_buffer[len] = '\0';
 
-					// Récupérer les valeurs de la variable data
+				    OtherDevice_t DeviceThatSent = {0};
+
+				    // Extract all the data from the received buffer
+				    extract_nucleoid(rx_buffer, &DeviceThatSent);
+				    extract_timestamp(rx_buffer, &DeviceThatSent);
+				    extract_acceleration(rx_buffer, &DeviceThatSent);
+				    extract_status(rx_buffer, &DeviceThatSent);
 
 
-					// Enregistrer les valeurs dans la FRAM
+
+
+				    // Store the structure (with an ID manager)
+				    StoreInFRAM(&DeviceThatSent);
 
 					netbuf_delete(buf);
 				}
@@ -1275,10 +1171,10 @@ void PublishToBroadcastTask(void const * argument)
 
 		len = snprintf(json_msg, sizeof(json_msg),
 		    "{"
-		    "\"type\":\"presence\","
-		    "\"id\":\"%s\","
-		    "\"ip\":\"%s\","
-		    "\"timestamp\":\"20%02d-%02d-%02dT%02d:%02d:%02dZ\""
+		    "\"type\": \"presence\","
+		    "\"id\": \"%s\","
+		    "\"ip\": \"%s\","
+		    "\"timestamp\": \"20%02d-%02d-%02dT%02d:%02d:%02dZ\""
 		    "}",
 		    device_id,
 		    my_ip,
