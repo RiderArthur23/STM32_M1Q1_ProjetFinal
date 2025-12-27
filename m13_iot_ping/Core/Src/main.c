@@ -862,6 +862,10 @@ void StartDefaultTask(void const * argument)
 	Init_FRAM();
 	Init_RTC();
 	ntp_send_request();
+	osDelay(10);
+
+	// If we want to clear the FRAM
+	//FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
 
   /* Infinite loop */
   for(;;)
@@ -1016,9 +1020,6 @@ void TCP_ServerTask(void const * argument)
 				    extract_timestamp(rx_buffer, &DeviceThatSent);
 				    extract_acceleration(rx_buffer, &DeviceThatSent);
 				    extract_status(rx_buffer, &DeviceThatSent);
-
-
-
 
 				    // Store the structure (with an ID manager)
 				    StoreInFRAM(&DeviceThatSent);

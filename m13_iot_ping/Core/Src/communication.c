@@ -28,52 +28,47 @@
  *
  * 1 -> The structures that contain all the data from the other devices occupy a maximum of 24 bytes each.
  *      They are stored between addresses 256 kB and 257.25 kB. (50 devices)
- *      Each structure is allocated an area of 25 bytes to ensure that there are no overlaps
+ *      Each structure is allocated an area of 30 bytes to ensure that there are no overlaps
  *      between two consecutive structures.
  *      As a result, the first stored structure starts at address 256 kB and ends at 256024.
  */
 
 void Init_FRAM(void)
 {
-	// Dummy message pour initialiser correctement le SPI
+	// Dummy message
 	uint8_t dummy = 0xFF;
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 	HAL_SPI_Transmit(&hspi4, &dummy, 1, 1000);
 	osDelay(1);
-
-	// Activer WREN
-	uint8_t tdata_init = FRAM_opcode_WREN;
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-	HAL_SPI_Transmit(&hspi4, &tdata_init, 1, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
 void Write_FRAM(uint32_t address, const void *data, uint16_t size)
 {
-	uint8_t adr[] = {FRAM_opcode_write, (address >> 16),  (address >> 8), address};
-
+	// Send the opcode to enable the writting
+	uint8_t tdata_init = FRAM_opcode_WREN;
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi4, &tdata_init, 1, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 
+	// Send the data
+	uint8_t adr[] = {FRAM_opcode_write, (address >> 16),  (address >> 8), address};
+	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
 	HAL_SPI_Transmit(&hspi4, (uint8_t *)data, size, 1000);
-
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
 void Read_FRAM(uint32_t address, void *data, uint16_t size)
 {
 	uint8_t adr[] = {FRAM_opcode_read, (address >> 16),  (address >> 8), address};
-
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
-
 	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
 	HAL_SPI_Receive(&hspi4, (uint8_t *)data, size, 1000);
-
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 }
 
 
-// To store the received data, we first check every 25th byte starting at the 256 kB address,
+// To store the received data, we first check every 30th byte starting at the 256 kB address,
 // as explained at the beginning of the FRAM section, because the first byte of each structure
 // contains the device ID, as defined in main.h.
 // If the ID is not yet known, the structure is stored after all previously analyzed ones.
@@ -83,7 +78,6 @@ void Read_FRAM(uint32_t address, void *data, uint16_t size)
 #define MaxDevices      50
 #define BytesPerDevice  30
 
-_Static_assert(sizeof(OtherDevice_t) <= BytesPerDevice, "OtherDevice_t does not fit in FRAM slot");
 
 void StoreInFRAM(OtherDevice_t *ts)
 {
@@ -92,24 +86,22 @@ void StoreInFRAM(OtherDevice_t *ts)
     for (uint8_t i = 0; i < MaxDevices; i++) {
 
         uint32_t address = StartAddress + (i * BytesPerDevice);
-        uint8_t idFromFRAM = 0;
+        uint8_t DeviceFromFRAM = 0;
 
-        Read_FRAM(address, &idFromFRAM, 1);
+        Read_FRAM(address, &DeviceFromFRAM, 1);
 
-        if (idFromFRAM == ts->NucleoID) {
+        if (DeviceFromFRAM == ts->NucleoID) {
             log_message("[SERVER - FRAM] ID known, overwrite\r\n");
             Write_FRAM(address, ts, sizeof(OtherDevice_t));
             osDelay(5);
             return;
         }
-        else if (idFromFRAM == 0) {
+        else if (DeviceFromFRAM == 0) {
             log_message("[SERVER - FRAM] New ID, store\r\n");
             Write_FRAM(address, ts, sizeof(OtherDevice_t));
             osDelay(1);
             return;
         }
-
-        osDelay(2);
     }
 
     log_message("[SERVER - FRAM] FRAM full, no space available\r\n");
