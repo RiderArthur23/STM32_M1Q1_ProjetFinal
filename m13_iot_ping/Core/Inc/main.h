@@ -61,7 +61,6 @@ typedef struct {
 extern I2C_HandleTypeDef hi2c2;
 extern SPI_HandleTypeDef hspi4;
 
-
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

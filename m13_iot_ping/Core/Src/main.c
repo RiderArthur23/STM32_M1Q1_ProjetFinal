@@ -21,7 +21,6 @@
 #include "cmsis_os.h"
 #include "lwip.h"
 
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdarg.h>
@@ -39,6 +38,7 @@
 // Own .h file
 #include "processing.h"
 #include "communication.h"
+#include "os_resources.h"	// Use for mutex to not let every file who use main.h to have access to the rtos lib
 
 
 
@@ -97,8 +97,11 @@ osThreadId heartBeatTaskHandle;
 osThreadId AccelerometerTaskHandle;
 osThreadId PublishtoBroadcastTaskHandle;
 osThreadId UDPServerTaskHandle;
+osThreadId MainTaskHandle;
 osMessageQId messageQueueHandle;
 osMutexId uartMutexHandle;
+osMutexId SPI4MutexHandle;
+osMutexId I2C2MutexHandle;
 osSemaphoreId AdcEndOfConversionHandle;
 /* USER CODE BEGIN PV */
 
@@ -152,6 +155,7 @@ void StartHeartBeatTask(void const * argument);
 void vAccelerometerTask(void const * argument);
 void PublishToBroadcastTask(void const * argument);
 void UDP_ServerTask(void const * argument);
+void vMainTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -211,6 +215,14 @@ int main(void)
   osMutexDef(uartMutex);
   uartMutexHandle = osMutexCreate(osMutex(uartMutex));
 
+  /* definition and creation of SPI4Mutex */
+  osMutexDef(SPI4Mutex);
+  SPI4MutexHandle = osMutexCreate(osMutex(SPI4Mutex));
+
+  /* definition and creation of I2C2Mutex */
+  osMutexDef(I2C2Mutex);
+  I2C2MutexHandle = osMutexCreate(osMutex(I2C2Mutex));
+
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
@@ -239,7 +251,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 1024);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityIdle, 0, 1024);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of logMessageTask */
@@ -263,14 +275,28 @@ int main(void)
   AccelerometerTaskHandle = osThreadCreate(osThread(AccelerometerTask), NULL);
 
   /* definition and creation of PublishtoBroadcastTask */
-  osThreadDef(PublishtoBroadcastTask, PublishToBroadcastTask, osPriorityNormal, 0, 4096);
+  osThreadDef(PublishtoBroadcastTask, PublishToBroadcastTask, osPriorityAboveNormal, 0, 4096);
   PublishtoBroadcastTaskHandle = osThreadCreate(osThread(PublishtoBroadcastTask), NULL);
 
   /* definition and creation of UDPServerTask */
   osThreadDef(UDPServerTask, UDP_ServerTask, osPriorityNormal, 0, 2048);
   UDPServerTaskHandle = osThreadCreate(osThread(UDPServerTask), NULL);
 
+  /* definition and creation of MainTask */
+  osThreadDef(MainTask, vMainTask, osPriorityHigh, 0, 1024);
+  MainTaskHandle = osThreadCreate(osThread(MainTask), NULL);
+
   /* USER CODE BEGIN RTOS_THREADS */
+
+  osThreadSuspend(logMessageTaskHandle);
+  osThreadSuspend(TCPClientTaskHandle);
+  osThreadSuspend(TCPServerTaskHandle);
+  osThreadSuspend(heartBeatTaskHandle);
+  osThreadSuspend(AccelerometerTaskHandle);
+  osThreadSuspend(PublishtoBroadcastTaskHandle);
+  osThreadSuspend(UDPServerTaskHandle);
+  osThreadSuspend(MainTaskHandle);
+
 
   /* USER CODE END RTOS_THREADS */
 
@@ -857,26 +883,27 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc){
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
-	MX_LWIP_Init();
-	osDelay(2000);
-	Init_FRAM();
-	Init_RTC();
-	ntp_send_request();
-	osDelay(10);
-
-	// If we want to clear the FRAM
-	//FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
+  /* init code for LWIP */
+  MX_LWIP_Init();
+  /* USER CODE BEGIN 5 */
 
   /* Infinite loop */
   for(;;)
   {
+	  uint8_t Vbtn = HAL_GPIO_ReadPin(USER_Btn_GPIO_Port, USER_Btn_Pin);
+	  if (Vbtn){
+		  osThreadResume(MainTaskHandle);
+		  osThreadResume(logMessageTaskHandle);
+		  osThreadResume(TCPClientTaskHandle);
+		  osThreadResume(TCPServerTaskHandle);
+		  osThreadResume(heartBeatTaskHandle);
+		  osThreadResume(AccelerometerTaskHandle);
+		  osThreadResume(PublishtoBroadcastTaskHandle);
+		  osThreadResume(UDPServerTaskHandle);
 
-	  // Regarder si les valeurs actuelles RMS sont plus grands que les 10 enregistrées
-
-	  // Si une valeur dépasse le seuil, vérifier avec les valeur des autres par rapport au timestamp (en mémoire)
-
-	  // Faire un appel de fonction pour un message d'alerte à envoyer sur le broadcast ?
-	  osDelay(1000);
+		  Vbtn = 0;
+	  }
+	  osDelay(3);
   }
   /* USER CODE END 5 */
 }
@@ -1195,7 +1222,7 @@ void PublishToBroadcastTask(void const * argument)
 
 		pbuf_free(p);
 
-		osDelay(10000);
+		osDelay(7000);
 	 }
   /* USER CODE END PublishToBroadcastTask */
 }
@@ -1273,6 +1300,37 @@ void UDP_ServerTask(void const * argument)
 	        osDelay(100);
 	    }
   /* USER CODE END UDP_ServerTask */
+}
+
+/* USER CODE BEGIN Header_vMainTask */
+/**
+* @brief Function implementing the MainTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_vMainTask */
+void vMainTask(void const * argument)
+{
+  /* USER CODE BEGIN vMainTask */
+	Init_FRAM();
+	Init_RTC();
+	ntp_send_request();
+	osDelay(10);
+
+	// If we want to clear the FRAM
+	//FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
+
+  /* Infinite loop */
+  for(;;)
+  {
+	  // Regarder si les valeurs actuelles RMS sont plus grands que les 10 enregistrées
+
+	  // Si une valeur dépasse le seuil, vérifier avec les valeur des autres par rapport au timestamp (en mémoire)
+
+	  // Faire un appel de fonction pour un message d'alerte à envoyer sur le broadcast ?
+    osDelay(100);
+  }
+  /* USER CODE END vMainTask */
 }
 
 /**

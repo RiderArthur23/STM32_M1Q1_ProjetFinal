@@ -8,6 +8,7 @@
 #include "processing.h"
 #include "main.h"
 #include "cmsis_os.h"
+#include "os_resources.h"	// Use for mutex to not let every file who use main.h to have access to the rtos lib
 
 #define RTC_adr 			0xD0
 #define	RTC_adr_seconds		0x00
@@ -44,6 +45,9 @@ void Init_FRAM(void)
 
 void Write_FRAM(uint32_t address, const void *data, uint16_t size)
 {
+
+	osMutexWait(SPI4MutexHandle, osWaitForever);
+
 	// Send the opcode to enable the writting
 	uint8_t tdata_init = FRAM_opcode_WREN;
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
@@ -56,15 +60,21 @@ void Write_FRAM(uint32_t address, const void *data, uint16_t size)
 	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
 	HAL_SPI_Transmit(&hspi4, (uint8_t *)data, size, 1000);
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
+
+	osMutexRelease(SPI4MutexHandle);
 }
 
 void Read_FRAM(uint32_t address, void *data, uint16_t size)
 {
+	osMutexWait(SPI4MutexHandle, osWaitForever);
+
 	uint8_t adr[] = {FRAM_opcode_read, (address >> 16),  (address >> 8), address};
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit(&hspi4, adr, 4, 1000);
 	HAL_SPI_Receive(&hspi4, (uint8_t *)data, size, 1000);
 	HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
+
+	osMutexRelease(SPI4MutexHandle);
 }
 
 
@@ -131,6 +141,8 @@ void Init_RTC(void)
 
 void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8_t date, uint8_t month, uint8_t years)
 {
+	osMutexWait(I2C2MutexHandle, osWaitForever);
+
 	// Convert decimal values to BCD
 	uint8_t BCD_seconds = DecimalToBCD(seconds);
 	uint8_t BCD_minutes = DecimalToBCD(minutes);
@@ -143,6 +155,8 @@ void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8
 	// Sent all the BCD values to the RTC
 	uint8_t tdata[] = {RTC_adr_seconds, BCD_seconds, BCD_minutes, BCD_hours, BCD_day, BCD_date, BCD_month, BCD_years};
 	HAL_I2C_Master_Transmit(&hi2c2, RTC_adr, tdata, sizeof(tdata), 1000);
+
+	osMutexRelease(I2C2MutexHandle);
 }
 
 
@@ -150,9 +164,10 @@ void Set_RTC(uint8_t seconds, uint8_t minutes, uint8_t hours, uint8_t day, uint8
  * uint8_t seconds, minutes, hours, ... ;
  * Read_RTC(&seconds, &minutes, &hours, ...);
  */
-void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours,
-              uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
+void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours, uint8_t *day, uint8_t *date, uint8_t *month, uint8_t *years)
 {
+	osMutexWait(I2C2MutexHandle, osWaitForever);
+
     uint8_t tdata[] = {RTC_adr_seconds};
     uint8_t rdata[7] = {0};
 
@@ -167,4 +182,6 @@ void Read_RTC(uint8_t *seconds, uint8_t *minutes, uint8_t *hours,
     *date  = BCDToDecimal(rdata[4] & 0x3F);
     *month = BCDToDecimal(rdata[5] & 0x1F);
     *years = BCDToDecimal(rdata[6]);
+
+    osMutexRelease(I2C2MutexHandle);
 }
