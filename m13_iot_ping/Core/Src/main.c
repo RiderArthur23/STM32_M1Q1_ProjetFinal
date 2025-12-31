@@ -132,6 +132,7 @@ LocalValue_t MaxLocalValues[10]={0};
 
 // For processing
 uint8_t NewValToProcess = 0;
+uint8_t FirstTime = 1;
 
 
 /* USER CODE END PV */
@@ -1313,24 +1314,40 @@ void vMainTask(void const * argument)
 	// If we want to clear the FRAM
 	//FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
 
+	float PreviousVal_x = 0.0f;
+	float PreviousVal_y = 0.0f;
+	float PreviousVal_z = 0.0f;
+
+	const float ACC_THRESHOLD = 3.0f;	// Seuil de détection, augmenter si trop sensible
+
   /* Infinite loop */
-  for(;;)
-  {
-	  // Regarder si la dernière valeurs est plus grande que le seuil et l'enregistrer en enlevent la plus vieille
-	  //L'ordre du tableau des valeurs est défini du plus récents(0) au plus vieux (10)
-	  	  // Il faut alors réorganiser le tableau à chaque fois
-	  // Cette valeur est donc ma dernière plus grande à envoyer en p to p en TCP
-	  // Il faut également que je regarde si d'autres ont aussi eu une secousse par rapport à cette dernière valeur
+	for (;;)
+	    {
+	        if (NewValToProcess)	// Si une nouvelle valeur a été traitée
+	        {
+	        	/***********		Détection de secousse		****************/
+	            float dx = LastProcessedValue.Value_x - PreviousVal_x;
+	            float dy = LastProcessedValue.Value_y - PreviousVal_y;
+	            float dz = LastProcessedValue.Value_z - PreviousVal_z;
 
-	  if (NewValToProcess){	// On rentre dedans si une nouvelle valeure est détectée
+	            // Détection de secousse
+	            if (fabsf(dx) > ACC_THRESHOLD || fabsf(dy) > ACC_THRESHOLD || fabsf(dz) > ACC_THRESHOLD)
+	            {
+	                HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
+	                osDelay(1000);
+	                HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);
+	            }
 
+	            PreviousVal_x = LastProcessedValue.Value_x;
+				PreviousVal_y = LastProcessedValue.Value_y;
+				PreviousVal_z = LastProcessedValue.Value_z;
 
-		  NewValToProcess = 0;
-	  }
+				/*************************************/
 
-
-    osDelay(100);
-  }
+	            NewValToProcess = 0;
+	        }
+	        osDelay(3);
+	    }
   /* USER CODE END vMainTask */
 }
 
