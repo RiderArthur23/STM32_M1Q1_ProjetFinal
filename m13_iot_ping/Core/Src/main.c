@@ -123,17 +123,16 @@ volatile uint8_t is_synced = 0;
 // All banks
 ip_addr_t IP_Bank[Max_IP] = {0};		// Max_IP set in defines
 
-// To read RTC
+// To read RTC for many sender
 uint8_t seconds, minutes, hours, day, date, month, years;
 
 // To store de RMS result
-float VRMS_X = 0;
-float VRMS_Y = 0;
-float VRMS_Z = 0;
+LocalValue_t LastProcessedValue;
+LocalValue_t MaxLocalValues[10]={0};
 
-uint16_t MaxRMS_X[10]={0};
-uint16_t MaxRMS_Y[10]={0};
-uint16_t MaxRMS_Z[10]={0};
+// For processing
+uint8_t NewValToProcess = 0;
+
 
 /* USER CODE END PV */
 
@@ -900,7 +899,6 @@ void StartDefaultTask(void const * argument)
 		  osThreadResume(AccelerometerTaskHandle);
 		  osThreadResume(PublishtoBroadcastTaskHandle);
 		  osThreadResume(UDPServerTaskHandle);
-
 		  Vbtn = 0;
 	  }
 	  osDelay(3);
@@ -971,9 +969,9 @@ void TCP_ClientTask(void const * argument)
 					           "\"id\": \"%s\","
 					           "\"timestamp\": \"20%02d-%02d-%02dT%02d:%02d:%02dZ\","
 					           "\"acceleration\": {"
-					               "\"x\": %.2f,"
-					               "\"y\": %.2f,"
-					               "\"z\": %.2f"
+					               "\"x\": %f,"
+					               "\"y\": %f,"
+					               "\"z\": %f"
 					           "},"
 					           "\"status\": \"%s\""
 					         "}",
@@ -984,13 +982,11 @@ void TCP_ClientTask(void const * argument)
 					         hours,
 					         minutes,
 					         seconds,
-					         VRMS_X,
-					         VRMS_Y,
-					         VRMS_Z,
+							 LastProcessedValue.Value_x,
+							 LastProcessedValue.Value_y,
+							 LastProcessedValue.Value_z,
 							 status
 					);
-
-
 
 					log_message("[CLIENT] Sending : %s...\r\n", json);
 					netconn_write(conn, json, strlen(json), NETCONN_COPY);
@@ -1141,21 +1137,18 @@ void vAccelerometerTask(void const * argument)
 		  SumSquareZ += MovingAverage_Z[i]*MovingAverage_Z[i];
 	  }
 
-	  VRMS_X = sqrtf(SumSquareX / 100.0f);
-	  VRMS_Y = sqrtf(SumSquareY / 100.0f);
-	  VRMS_Z = sqrtf(SumSquareZ / 100.0f);
+	  LastProcessedValue.Value_x = sqrtf(SumSquareX / 100.0f);
+	  LastProcessedValue.Value_y = sqrtf(SumSquareY / 100.0f);
+	  LastProcessedValue.Value_z = sqrtf(SumSquareZ / 100.0f);
 
-	  /*	Need a bit of processt to send the data to UART		*/
-	  	  uint32_t d_VRMS_X = (uint32_t)VRMS_X;
-	  	  uint32_t u_VRMS_X = (uint32_t)((VRMS_X-d_VRMS_X)*1000);
+	  Read_RTC(&LastProcessedValue.sec, &LastProcessedValue.min, &LastProcessedValue.hour,
+			  &day, &LastProcessedValue.mday, &LastProcessedValue.mon, &LastProcessedValue.year);
 
-	  	  uint32_t d_VRMS_Y = (uint32_t)VRMS_Y;
-	  	  uint32_t u_VRMS_Y = (uint32_t)((VRMS_Y-d_VRMS_Y)*1000);
+	  NewValToProcess = 1;
 
-	  	  uint32_t d_VRMS_Z = (uint32_t)VRMS_Z;
-	  	  uint32_t u_VRMS_Z = (uint32_t)((VRMS_Z-d_VRMS_Z)*1000);
+	  log_message("Accelerometre : %f ; %f ; %f    -    %d:%d:%d\r\n", LastProcessedValue.Value_x, LastProcessedValue.Value_y, LastProcessedValue.Value_z, LastProcessedValue.hour, LastProcessedValue.min, LastProcessedValue.sec);
 
-	  	  log_message("Accelerometre : %d.%d ; %d.%d ; %d.%d\r\n", d_VRMS_X, u_VRMS_X, d_VRMS_Y, u_VRMS_Y, d_VRMS_Z, u_VRMS_Z);
+
   }
   /* USER CODE END vAccelerometerTask */
 }
@@ -1193,7 +1186,7 @@ void PublishToBroadcastTask(void const * argument)
 	for(;;)
 	{
 		// Read the data from the RTC and stock to the adress of these global variables
-		//Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
+		Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
 
 		char json_msg[256];
 
@@ -1222,7 +1215,7 @@ void PublishToBroadcastTask(void const * argument)
 
 		pbuf_free(p);
 
-		osDelay(7000);
+		osDelay(10000);
 	 }
   /* USER CODE END PublishToBroadcastTask */
 }
@@ -1323,11 +1316,19 @@ void vMainTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	  // Regarder si les valeurs actuelles RMS sont plus grands que les 10 enregistrées
+	  // Regarder si la dernière valeurs est plus grande que le seuil et l'enregistrer en enlevent la plus vieille
+	  //L'ordre du tableau des valeurs est défini du plus récents(0) au plus vieux (10)
+	  	  // Il faut alors réorganiser le tableau à chaque fois
+	  // Cette valeur est donc ma dernière plus grande à envoyer en p to p en TCP
+	  // Il faut également que je regarde si d'autres ont aussi eu une secousse par rapport à cette dernière valeur
 
-	  // Si une valeur dépasse le seuil, vérifier avec les valeur des autres par rapport au timestamp (en mémoire)
+	  if (NewValToProcess){	// On rentre dedans si une nouvelle valeure est détectée
 
-	  // Faire un appel de fonction pour un message d'alerte à envoyer sur le broadcast ?
+
+		  NewValToProcess = 0;
+	  }
+
+
     osDelay(100);
   }
   /* USER CODE END vMainTask */

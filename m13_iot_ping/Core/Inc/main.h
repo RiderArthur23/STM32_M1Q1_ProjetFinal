@@ -56,6 +56,18 @@ typedef struct {
 	float LastHighestValue_z;
 } OtherDevice_t;
 
+typedef struct {
+    uint8_t sec;
+    uint8_t min;
+    uint8_t hour;
+    uint8_t mday;
+    uint8_t mon;
+    uint8_t year;
+    float Value_x;
+	float Value_y;
+	float Value_z;
+} LocalValue_t;
+
 
 // Need to be extern beacause used in another .h file
 extern I2C_HandleTypeDef hi2c2;
