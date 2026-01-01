@@ -14,6 +14,7 @@ void Init_FRAM(void);
 void Write_FRAM(uint32_t address, const void *data, uint16_t size);
 void Read_FRAM(uint32_t address, void *data, uint16_t size);
 void StoreInFRAM(OtherDevice_t *ts);
+int CheckIfHigher(LocalValue_t *ts);
 void FRAM_ClearRange(uint32_t address, uint32_t length);
 
 // RTC

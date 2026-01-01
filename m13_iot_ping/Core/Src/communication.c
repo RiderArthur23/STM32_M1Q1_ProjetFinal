@@ -85,17 +85,16 @@ void Read_FRAM(uint32_t address, void *data, uint16_t size)
 // If the same ID as the one being analyzed is found, the data already stored in FRAM
 // is erased and replaced with the new data.
 
-#define MaxDevices      50
-#define BytesPerDevice  30
+#define MaxExternalDevices      50
+#define BytesPerExternalDevices  30
+#define StartAddressForExternalDevices 256000
 
 
-void StoreInFRAM(OtherDevice_t *ts)
+void StoreExternDeviceInFRAM(OtherDevice_t *ts)
 {
-    uint32_t StartAddress = 256000;
+    for (uint8_t i = 0; i < MaxExternalDevices; i++) {
 
-    for (uint8_t i = 0; i < MaxDevices; i++) {
-
-        uint32_t address = StartAddress + (i * BytesPerDevice);
+        uint32_t address = StartAddressForExternalDevices + (i * BytesPerExternalDevices);
         uint8_t DeviceFromFRAM = 0;
 
         Read_FRAM(address, &DeviceFromFRAM, 1);
@@ -116,6 +115,40 @@ void StoreInFRAM(OtherDevice_t *ts)
 
     log_message("[SERVER - FRAM] FRAM full, no space available\r\n");
 }
+
+
+// Here the adress for local values goes from 100.000 to 100.250
+
+#define MaxLocalValues 10
+#define BytesPerLocalValues 25
+#define StartAdressForLocalValues 100000
+
+int CheckIfHigher(LocalValue_t *ts)
+{
+    for (uint8_t i = 0; i < MaxLocalValues; i++)
+    {
+        uint32_t address = StartAdressForLocalValues + (i * BytesPerLocalValues);
+
+        LocalValue_t stored;
+        Read_FRAM(address, &stored, sizeof(LocalValue_t));
+
+        float new_max = fmaxf(ts->Value_x, fmaxf(ts->Value_y, ts->Value_z));
+
+        float stored_max = fmaxf(stored.Value_x, fmaxf(stored.Value_y, stored.Value_z));
+
+        if (new_max > stored_max)
+        {
+            Write_FRAM(address, ts, sizeof(LocalValue_t));
+            log_message("Nouvelle valeur RMS plus elevee stockee en FRAM\r\n");
+            return 1;
+        }
+    }
+
+    log_message("Valeur RMS insuffisante, non stockee\r\n");
+    return 0;
+}
+
+
 
 
 void FRAM_ClearRange(uint32_t address, uint32_t length)

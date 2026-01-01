@@ -127,8 +127,8 @@ ip_addr_t IP_Bank[Max_IP] = {0};		// Max_IP set in defines
 uint8_t seconds, minutes, hours, day, date, month, years;
 
 // To store de RMS result
-LocalValue_t LastProcessedValue;
-LocalValue_t MaxLocalValues[10]={0};
+LocalValue_t LastProcessedValue;		// Dernière valeur issue de l'ADC
+LocalValue_t MaxLocalValues[10]={0};	// Tableau des plus grandes valeurs
 
 // For processing
 uint8_t NewValToProcess = 0;
@@ -1046,7 +1046,7 @@ void TCP_ServerTask(void const * argument)
 				    extract_status(rx_buffer, &DeviceThatSent);
 
 				    // Store the structure (with an ID manager)
-				    StoreInFRAM(&DeviceThatSent);
+				    StoreExternDeviceInFRAM(&DeviceThatSent);
 
 					netbuf_delete(buf);
 				}
@@ -1312,7 +1312,8 @@ void vMainTask(void const * argument)
 	osDelay(10);
 
 	// If we want to clear the FRAM
-	//FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
+	FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
+	FRAM_ClearRange((uint32_t)100000, (uint32_t)(25*10));
 
 	float PreviousVal_x = 0.0f;
 	float PreviousVal_y = 0.0f;
@@ -1329,23 +1330,25 @@ void vMainTask(void const * argument)
 	            float dx = LastProcessedValue.Value_x - PreviousVal_x;
 	            float dy = LastProcessedValue.Value_y - PreviousVal_y;
 	            float dz = LastProcessedValue.Value_z - PreviousVal_z;
-
-	            // Détection de secousse
 	            if (fabsf(dx) > ACC_THRESHOLD || fabsf(dy) > ACC_THRESHOLD || fabsf(dz) > ACC_THRESHOLD)
 	            {
-	                HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
-	                osDelay(1000);
-	                HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);
+	            	// Put the state of the value as a "secousse"
+	            	LastProcessedValue.status = 1;
 	            }
-
 	            PreviousVal_x = LastProcessedValue.Value_x;
 				PreviousVal_y = LastProcessedValue.Value_y;
 				PreviousVal_z = LastProcessedValue.Value_z;
 
-				/*************************************/
+				/***********		If there is a lower value in the FRAM, replace it with the new one		****************/
+				CheckIfHigher(&LastProcessedValue);
 
 	            NewValToProcess = 0;
 	        }
+
+	        // Compare the values of other devices reported as “shake” with my last value reported as shake,
+	        // 	and if the timestamp matches, turn on an LED.
+
+
 	        osDelay(3);
 	    }
   /* USER CODE END vMainTask */

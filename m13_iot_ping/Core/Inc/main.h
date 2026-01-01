@@ -63,6 +63,7 @@ typedef struct {
     uint8_t mday;
     uint8_t mon;
     uint8_t year;
+    uint8_t status;
     float Value_x;
 	float Value_y;
 	float Value_z;
