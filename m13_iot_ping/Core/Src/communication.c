@@ -116,39 +116,75 @@ void StoreExternDeviceInFRAM(OtherDevice_t *ts)
     log_message("[SERVER - FRAM] FRAM full, no space available\r\n");
 }
 
+int CheckShakeCorrelationInFRAM(LocalValue_t *ts)
+{
+	if (ts->status == 1){
+		for (uint8_t i = 0; i < MaxExternalDevices; i++)
+			{
+				uint32_t address = StartAddressForExternalDevices + (i * BytesPerExternalDevices);
+
+				OtherDevice_t stored;
+				Read_FRAM(address, &stored, sizeof(OtherDevice_t));
+
+				if (stored.NucleoID == 0){return 0;}
+
+				// Si la valeur de la FRAM est concidérée comme une secousse et que le time stamp correspond, retourner 1
+				if (stored.status == 1 && stored.year == ts->year && stored.mon == ts->mon && stored.mday == ts->mday &&
+						stored.hour == ts->hour && abs(stored.min-ts->min) <= 1){
+						return 1;
+				}
+			}
+		return 0;
+
+	}
+	else {return 0;}
+
+}
+
 
 // Here the adress for local values goes from 100.000 to 100.250
 
 #define MaxLocalValues 10
 #define BytesPerLocalValues 25
-#define StartAdressForLocalValues 100000
-
-int CheckIfHigher(LocalValue_t *ts)
+#define StartAdressForLocalValues 130000
+int UpdateFRAMIfHigherValue(LocalValue_t *ts, LocalValue_t *LastShakeValue)
 {
+    if (ts == NULL)
+        return 0;
+
     for (uint8_t i = 0; i < MaxLocalValues; i++)
     {
-        uint32_t address = StartAdressForLocalValues + (i * BytesPerLocalValues);
+        uint32_t address = StartAdressForLocalValues +
+                           (i * sizeof(LocalValue_t));
 
         LocalValue_t stored;
         Read_FRAM(address, &stored, sizeof(LocalValue_t));
 
-        float new_max = fmaxf(ts->Value_x, fmaxf(ts->Value_y, ts->Value_z));
+        float new_max = ts->Value_x;
+        if (ts->Value_y > new_max) new_max = ts->Value_y;
+        if (ts->Value_z > new_max) new_max = ts->Value_z;
 
-        float stored_max = fmaxf(stored.Value_x, fmaxf(stored.Value_y, stored.Value_z));
+        float stored_max = stored.Value_x;
+        if (stored.Value_y > stored_max) stored_max = stored.Value_y;
+        if (stored.Value_z > stored_max) stored_max = stored.Value_z;
 
         if (new_max > stored_max)
         {
             Write_FRAM(address, ts, sizeof(LocalValue_t));
-            log_message("Nouvelle valeur RMS plus elevee stockee en FRAM\r\n");
+
+            if (LastShakeValue != NULL)
+            {
+                *LastShakeValue = *ts;
+            }
+
+            // log_message("Nouvelle valeur RMS plus elevee stockee en FRAM\r\n");
             return 1;
         }
     }
 
-    log_message("Valeur RMS insuffisante, non stockee\r\n");
+    // log_message("Valeur RMS insuffisante, non stockee\r\n");
     return 0;
 }
-
-
 
 
 void FRAM_ClearRange(uint32_t address, uint32_t length)

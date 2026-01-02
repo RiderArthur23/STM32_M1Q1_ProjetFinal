@@ -130,6 +130,9 @@ uint8_t seconds, minutes, hours, day, date, month, years;
 LocalValue_t LastProcessedValue;		// Dernière valeur issue de l'ADC
 LocalValue_t MaxLocalValues[10]={0};	// Tableau des plus grandes valeurs
 
+// To store the last value set as a shake
+LocalValue_t LastShakeValue;
+
 // For processing
 uint8_t NewValToProcess = 0;
 uint8_t FirstTime = 1;
@@ -283,7 +286,7 @@ int main(void)
   UDPServerTaskHandle = osThreadCreate(osThread(UDPServerTask), NULL);
 
   /* definition and creation of MainTask */
-  osThreadDef(MainTask, vMainTask, osPriorityHigh, 0, 1024);
+  osThreadDef(MainTask, vMainTask, osPriorityNormal, 0, 1024);
   MainTaskHandle = osThreadCreate(osThread(MainTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -887,6 +890,11 @@ void StartDefaultTask(void const * argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
 
+  Init_FRAM();
+  // If we want to clear the FRAM
+  FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
+  FRAM_ClearRange((uint32_t)130000, (uint32_t)(25*10));
+
   /* Infinite loop */
   for(;;)
   {
@@ -961,7 +969,10 @@ void TCP_ClientTask(void const * argument)
 				if (err == ERR_OK) {
 
 					Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
-					char *status = "normal";
+
+					const char *status;
+					if (LastShakeValue.status == 0){status = "normal";}
+					else{status = "secousse";}
 
 					char json[512];
 					snprintf(json, sizeof(json),
@@ -983,9 +994,9 @@ void TCP_ClientTask(void const * argument)
 					         hours,
 					         minutes,
 					         seconds,
-							 LastProcessedValue.Value_x,
-							 LastProcessedValue.Value_y,
-							 LastProcessedValue.Value_z,
+							 LastShakeValue.Value_x,
+							 LastShakeValue.Value_y,
+							 LastShakeValue.Value_z,
 							 status
 					);
 
@@ -1306,20 +1317,15 @@ void UDP_ServerTask(void const * argument)
 void vMainTask(void const * argument)
 {
   /* USER CODE BEGIN vMainTask */
-	Init_FRAM();
 	Init_RTC();
 	ntp_send_request();
 	osDelay(10);
-
-	// If we want to clear the FRAM
-	FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
-	FRAM_ClearRange((uint32_t)100000, (uint32_t)(25*10));
 
 	float PreviousVal_x = 0.0f;
 	float PreviousVal_y = 0.0f;
 	float PreviousVal_z = 0.0f;
 
-	const float ACC_THRESHOLD = 3.0f;	// Seuil de détection, augmenter si trop sensible
+	const float ACC_THRESHOLD = 4.0f;	// Seuil de détection, augmenter si trop sensible
 
   /* Infinite loop */
 	for (;;)
@@ -1334,13 +1340,23 @@ void vMainTask(void const * argument)
 	            {
 	            	// Put the state of the value as a "secousse"
 	            	LastProcessedValue.status = 1;
+	            	log_message("Detection locale !\r\n");
 	            }
+	            else{LastProcessedValue.status = 0;}
 	            PreviousVal_x = LastProcessedValue.Value_x;
 				PreviousVal_y = LastProcessedValue.Value_y;
 				PreviousVal_z = LastProcessedValue.Value_z;
 
 				/***********		If there is a lower value in the FRAM, replace it with the new one		****************/
-				CheckIfHigher(&LastProcessedValue);
+				if (UpdateFRAMIfHigherValue(&LastProcessedValue, &LastShakeValue)){}
+
+				/***********		Check the other device value state in the FRAM to make an alert of shake or not		****************/
+
+				if (CheckShakeCorrelationInFRAM(&LastShakeValue)){
+					// Use the semaphore to activate the LED
+					HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
+				}
+				else {HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);}
 
 	            NewValToProcess = 0;
 	        }
