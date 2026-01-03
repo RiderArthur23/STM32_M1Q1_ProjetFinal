@@ -91,6 +91,8 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+void log_message(const char *format, ...);
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

@@ -131,7 +131,7 @@ LocalValue_t LastProcessedValue;		// Dernière valeur issue de l'ADC
 LocalValue_t MaxLocalValues[10]={0};	// Tableau des plus grandes valeurs
 
 // To store the last value set as a shake
-LocalValue_t LastShakeValue;
+LocalValue_t HighestRecentValue;
 
 // For processing
 uint8_t NewValToProcess = 0;
@@ -895,22 +895,45 @@ void StartDefaultTask(void const * argument)
   FRAM_ClearRange((uint32_t)256000, (uint32_t)(30*50));
   FRAM_ClearRange((uint32_t)130000, (uint32_t)(25*10));
 
+  uint8_t State = 0;
+  uint8_t prevBtn = 0;
+
   /* Infinite loop */
-  for(;;)
+  for (;;)
   {
-	  uint8_t Vbtn = HAL_GPIO_ReadPin(USER_Btn_GPIO_Port, USER_Btn_Pin);
-	  if (Vbtn){
-		  osThreadResume(MainTaskHandle);
-		  osThreadResume(logMessageTaskHandle);
-		  osThreadResume(TCPClientTaskHandle);
-		  osThreadResume(TCPServerTaskHandle);
-		  osThreadResume(heartBeatTaskHandle);
-		  osThreadResume(AccelerometerTaskHandle);
-		  osThreadResume(PublishtoBroadcastTaskHandle);
-		  osThreadResume(UDPServerTaskHandle);
-		  Vbtn = 0;
-	  }
-	  osDelay(3);
+      uint8_t Vbtn = HAL_GPIO_ReadPin(USER_Btn_GPIO_Port, USER_Btn_Pin);
+      if (Vbtn && !prevBtn)
+      {
+          if (!State)
+          {
+              osThreadResume(MainTaskHandle);
+              osThreadResume(logMessageTaskHandle);
+              osThreadResume(TCPClientTaskHandle);
+              osThreadResume(TCPServerTaskHandle);
+              osThreadResume(heartBeatTaskHandle);
+              osThreadResume(AccelerometerTaskHandle);
+              osThreadResume(PublishtoBroadcastTaskHandle);
+              osThreadResume(UDPServerTaskHandle);
+              State = 1;
+          }
+          else
+          {
+              osThreadSuspend(MainTaskHandle);
+              osThreadSuspend(logMessageTaskHandle);
+              osThreadSuspend(TCPClientTaskHandle);
+              osThreadSuspend(TCPServerTaskHandle);
+              osThreadSuspend(heartBeatTaskHandle);
+              osThreadSuspend(AccelerometerTaskHandle);
+              osThreadSuspend(PublishtoBroadcastTaskHandle);
+              osThreadSuspend(UDPServerTaskHandle);
+              State = 0;
+          }
+
+          osDelay(50);
+      }
+
+      prevBtn = Vbtn;
+      osDelay(10);
   }
   /* USER CODE END 5 */
 }
@@ -971,7 +994,7 @@ void TCP_ClientTask(void const * argument)
 					Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
 
 					const char *status;
-					if (LastShakeValue.status == 0){status = "normal";}
+					if (HighestRecentValue.status == 0){status = "normal";}
 					else{status = "secousse";}
 
 					char json[512];
@@ -994,9 +1017,9 @@ void TCP_ClientTask(void const * argument)
 					         hours,
 					         minutes,
 					         seconds,
-							 LastShakeValue.Value_x,
-							 LastShakeValue.Value_y,
-							 LastShakeValue.Value_z,
+							 HighestRecentValue.Value_x,
+							 HighestRecentValue.Value_y,
+							 HighestRecentValue.Value_z,
 							 status
 					);
 
@@ -1348,11 +1371,11 @@ void vMainTask(void const * argument)
 				PreviousVal_z = LastProcessedValue.Value_z;
 
 				/***********		If there is a lower value in the FRAM, replace it with the new one		****************/
-				if (UpdateFRAMIfHigherValue(&LastProcessedValue, &LastShakeValue)){}
+				if (UpdateFRAMIfHigherValue(&LastProcessedValue, &HighestRecentValue)){}
 
 				/***********		Check the other device value state in the FRAM to make an alert of shake or not		****************/
 
-				if (CheckShakeCorrelationInFRAM(&LastShakeValue)){
+				if (CheckShakeCorrelationInFRAM(&HighestRecentValue)){
 					// Use the semaphore to activate the LED
 					HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
 				}

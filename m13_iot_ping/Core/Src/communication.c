@@ -100,13 +100,13 @@ void StoreExternDeviceInFRAM(OtherDevice_t *ts)
         Read_FRAM(address, &DeviceFromFRAM, 1);
 
         if (DeviceFromFRAM == ts->NucleoID) {
-            log_message("[SERVER - FRAM] ID known, overwrite\r\n");
+            log_message("[SERVER - FRAM] ID %lu known, overwrite\r\n", ts->NucleoID);
             Write_FRAM(address, ts, sizeof(OtherDevice_t));
             osDelay(5);
             return;
         }
         else if (DeviceFromFRAM == 0) {
-            log_message("[SERVER - FRAM] New ID, store\r\n");
+            log_message("[SERVER - FRAM] New ID %lu, store\r\n", ts->NucleoID);
             Write_FRAM(address, ts, sizeof(OtherDevice_t));
             osDelay(1);
             return;
@@ -147,7 +147,7 @@ int CheckShakeCorrelationInFRAM(LocalValue_t *ts)
 #define MaxLocalValues 10
 #define BytesPerLocalValues 25
 #define StartAdressForLocalValues 130000
-int UpdateFRAMIfHigherValue(LocalValue_t *ts, LocalValue_t *LastShakeValue)
+int UpdateFRAMIfHigherValue(LocalValue_t *ts, LocalValue_t *HighestRecentValue)
 {
     if (ts == NULL)
         return 0;
@@ -172,9 +172,9 @@ int UpdateFRAMIfHigherValue(LocalValue_t *ts, LocalValue_t *LastShakeValue)
         {
             Write_FRAM(address, ts, sizeof(LocalValue_t));
 
-            if (LastShakeValue != NULL)
+            if (HighestRecentValue != NULL)
             {
-                *LastShakeValue = *ts;
+                *HighestRecentValue = *ts;
             }
 
             // log_message("Nouvelle valeur RMS plus elevee stockee en FRAM\r\n");
