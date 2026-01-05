@@ -103,6 +103,7 @@ osMutexId uartMutexHandle;
 osMutexId SPI4MutexHandle;
 osMutexId I2C2MutexHandle;
 osSemaphoreId AdcEndOfConversionHandle;
+osSemaphoreId NewValToProcessHandle;
 /* USER CODE BEGIN PV */
 
 /* FreeRTOS private variables */
@@ -234,6 +235,10 @@ int main(void)
   /* definition and creation of AdcEndOfConversion */
   osSemaphoreDef(AdcEndOfConversion);
   AdcEndOfConversionHandle = osSemaphoreCreate(osSemaphore(AdcEndOfConversion), 1);
+
+  /* definition and creation of NewValToProcess */
+  osSemaphoreDef(NewValToProcess);
+  NewValToProcessHandle = osSemaphoreCreate(osSemaphore(NewValToProcess), 1);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 
@@ -1179,7 +1184,8 @@ void vAccelerometerTask(void const * argument)
 	  Read_RTC(&LastProcessedValue.sec, &LastProcessedValue.min, &LastProcessedValue.hour,
 			  &day, &LastProcessedValue.mday, &LastProcessedValue.mon, &LastProcessedValue.year);
 
-	  NewValToProcess = 1;
+	  // NewValToProcess = 1;
+	  osSemaphoreRelease(NewValToProcessHandle);
 
 	  log_message("Accelerometre : %f ; %f ; %f    -    %d:%d:%d\r\n", LastProcessedValue.Value_x, LastProcessedValue.Value_y, LastProcessedValue.Value_z, LastProcessedValue.hour, LastProcessedValue.min, LastProcessedValue.sec);
 
@@ -1353,8 +1359,9 @@ void vMainTask(void const * argument)
   /* Infinite loop */
 	for (;;)
 	    {
-	        if (NewValToProcess)	// Si une nouvelle valeur a été traitée
-	        {
+	        //if (NewValToProcess)	// Si une nouvelle valeur a été traitée
+	        //{
+		osSemaphoreWait(NewValToProcessHandle, osWaitForever);
 	        	/***********		Détection de secousse		****************/
 	            float dx = LastProcessedValue.Value_x - PreviousVal_x;
 	            float dy = LastProcessedValue.Value_y - PreviousVal_y;
@@ -1382,13 +1389,8 @@ void vMainTask(void const * argument)
 				else {HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);}
 
 	            NewValToProcess = 0;
-	        }
-
-	        // Compare the values of other devices reported as “shake” with my last value reported as shake,
-	        // 	and if the timestamp matches, turn on an LED.
-
-
-	        osDelay(3);
+	        //}
+	        //osDelay(3);
 	    }
   /* USER CODE END vMainTask */
 }
