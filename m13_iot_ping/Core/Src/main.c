@@ -1382,7 +1382,7 @@ void vMainTask(void const * argument)
 
 				/***********		Check the other device value state in the FRAM to make an alert of shake or not		****************/
 
-				if (CheckShakeCorrelationInFRAM(&HighestRecentValue)){
+				if (CheckShakeCorrelationInFRAM(&HighestRecentValue) || CheckShakeCorrelationInFRAM(&LastProcessedValue)){
 					// Use the semaphore to activate the LED
 					HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
 				}
