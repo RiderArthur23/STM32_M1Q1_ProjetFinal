@@ -996,7 +996,7 @@ void TCP_ClientTask(void const * argument)
 
 				if (err == ERR_OK) {
 
-					Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
+					// Read_RTC(&seconds, &minutes, &hours, &day, &date, &month, &years);
 
 					const char *status;
 					if (HighestRecentValue.status == 0){status = "normal";}
@@ -1009,19 +1009,19 @@ void TCP_ClientTask(void const * argument)
 					           "\"id\": \"%s\","
 					           "\"timestamp\": \"20%02d-%02d-%02dT%02d:%02d:%02dZ\","
 					           "\"acceleration\": {"
-					               "\"x\": %f,"
-					               "\"y\": %f,"
-					               "\"z\": %f"
+					               "\"x\": %.3f,"
+					               "\"y\": %.3f,"
+					               "\"z\": %.3f"
 					           "},"
 					           "\"status\": \"%s\""
 					         "}",
 					         device_id,
-					         years,
-					         month,
-					         date,
-					         hours,
-					         minutes,
-					         seconds,
+							 HighestRecentValue.year,
+							 HighestRecentValue.mon,
+							 HighestRecentValue.mday,
+							 HighestRecentValue.hour,
+							 HighestRecentValue.min,
+							 HighestRecentValue.sec,
 							 HighestRecentValue.Value_x,
 							 HighestRecentValue.Value_y,
 							 HighestRecentValue.Value_z,
@@ -1187,7 +1187,7 @@ void vAccelerometerTask(void const * argument)
 	  // NewValToProcess = 1;
 	  osSemaphoreRelease(NewValToProcessHandle);
 
-	  log_message("Accelerometre : %f ; %f ; %f    -    %d:%d:%d\r\n", LastProcessedValue.Value_x, LastProcessedValue.Value_y, LastProcessedValue.Value_z, LastProcessedValue.hour, LastProcessedValue.min, LastProcessedValue.sec);
+	  log_message("Accelerometre : %.3f ; %.3f ; %.3f    -    %d:%d:%d\r\n", LastProcessedValue.Value_x, LastProcessedValue.Value_y, LastProcessedValue.Value_z, LastProcessedValue.hour, LastProcessedValue.min, LastProcessedValue.sec);
 
 
   }
@@ -1359,38 +1359,32 @@ void vMainTask(void const * argument)
   /* Infinite loop */
 	for (;;)
 	    {
-	        //if (NewValToProcess)	// Si une nouvelle valeur a été traitée
-	        //{
 		osSemaphoreWait(NewValToProcessHandle, osWaitForever);
-	        	/***********		Détection de secousse		****************/
-	            float dx = LastProcessedValue.Value_x - PreviousVal_x;
-	            float dy = LastProcessedValue.Value_y - PreviousVal_y;
-	            float dz = LastProcessedValue.Value_z - PreviousVal_z;
-	            if (fabsf(dx) > ACC_THRESHOLD || fabsf(dy) > ACC_THRESHOLD || fabsf(dz) > ACC_THRESHOLD)
-	            {
-	            	// Put the state of the value as a "secousse"
-	            	LastProcessedValue.status = 1;
-	            	log_message("Detection locale !\r\n");
-	            }
-	            else{LastProcessedValue.status = 0;}
-	            PreviousVal_x = LastProcessedValue.Value_x;
-				PreviousVal_y = LastProcessedValue.Value_y;
-				PreviousVal_z = LastProcessedValue.Value_z;
+		/***********		Détection de secousse		****************/
+		float dx = LastProcessedValue.Value_x - PreviousVal_x;
+		float dy = LastProcessedValue.Value_y - PreviousVal_y;
+		float dz = LastProcessedValue.Value_z - PreviousVal_z;
+		if (fabsf(dx) > ACC_THRESHOLD || fabsf(dy) > ACC_THRESHOLD || fabsf(dz) > ACC_THRESHOLD)
+		{
+			// Put the state of the value as a "secousse"
+			LastProcessedValue.status = 1;
+			log_message("Detection locale !\r\n");
+		}
+		else{LastProcessedValue.status = 0;}
+		PreviousVal_x = LastProcessedValue.Value_x;
+		PreviousVal_y = LastProcessedValue.Value_y;
+		PreviousVal_z = LastProcessedValue.Value_z;
 
-				/***********		If there is a lower value in the FRAM, replace it with the new one		****************/
-				if (UpdateFRAMIfHigherValue(&LastProcessedValue, &HighestRecentValue)){}
+		/***********		If there is a lower value in the FRAM, replace it with the new one		****************/
+		if (UpdateFRAMIfHigherValue(&LastProcessedValue, &HighestRecentValue)){}
 
-				/***********		Check the other device value state in the FRAM to make an alert of shake or not		****************/
+		/***********		Check the other device value state in the FRAM to make an alert of shake or not		****************/
 
-				if (CheckShakeCorrelationInFRAM(&HighestRecentValue) || CheckShakeCorrelationInFRAM(&LastProcessedValue)){
-					// Use the semaphore to activate the LED
-					HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
-				}
-				else {HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);}
-
-	            NewValToProcess = 0;
-	        //}
-	        //osDelay(3);
+		if (CheckShakeCorrelationInFRAM(&HighestRecentValue) || CheckShakeCorrelationInFRAM(&LastProcessedValue)){
+			// Use the semaphore to activate the LED
+			HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
+		}
+		else {HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);}
 	    }
   /* USER CODE END vMainTask */
 }

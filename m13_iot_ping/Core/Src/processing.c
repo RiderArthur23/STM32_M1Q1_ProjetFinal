@@ -82,7 +82,9 @@ int extract_status(const char data[], OtherDevice_t *ts)
 
     p++;
 
-    ts->status = (strncmp(p, "normal", 6) == 0) ? 0 : 1;
+    if (strncmp(p, "normal", 6) == 0) {ts->status = 0;}
+    else {ts->status = 1;}
+
     return 1;
 }
 

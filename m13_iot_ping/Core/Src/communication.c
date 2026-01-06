@@ -128,7 +128,7 @@ int CheckShakeCorrelationInFRAM(LocalValue_t *ts)
 
 				if (stored.NucleoID == 0){return 0;}
 
-				// Si la valeur de la FRAM est concidérée comme une secousse et que le time stamp correspond, retourner 1
+				// If the FRAM value is considered a shock and the timestamp matches, return 1.
 				if (stored.status == 1 && stored.year == ts->year && stored.mon == ts->mon && stored.mday == ts->mday &&
 						stored.hour == ts->hour && abs(stored.min-ts->min) <= 1){
 						return 1;
